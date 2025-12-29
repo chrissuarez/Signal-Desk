@@ -1,18 +1,27 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { fetchOpportunities, triggerIngestion, submitFeedback } from '@/lib/api';
+import { fetchOpportunities, triggerIngestion, submitFeedback, fetchSettings, updateSettings } from '@/lib/api';
 import { Opportunity } from '../types';
 
 export default function Dashboard() {
   const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
   const [loading, setLoading] = useState(true);
+  const [prefs, setPrefs] = useState({ keywords: [], locations: [] });
+  const [isSaving, setIsSaving] = useState(false);
 
   const loadData = async () => {
     setLoading(true);
     try {
-      const data = await fetchOpportunities();
-      setOpportunities(data);
+      const [oppsData, prefsData] = await Promise.all([
+        fetchOpportunities(),
+        fetchSettings('user_preferences')
+      ]);
+      setOpportunities(oppsData);
+      setPrefs({
+        keywords: prefsData.keywords || ['Software Engineer', 'AI', 'Fullstack', 'TypeScript'],
+        locations: prefsData.locations || ['Remote', 'London'],
+      });
     } catch (error) {
       console.error(error);
     } finally {
@@ -32,6 +41,18 @@ export default function Dashboard() {
   const handleFeedback = async (id: number, action: string) => {
     await submitFeedback(id, action);
     loadData();
+  };
+
+  const handleSavePrefs = async () => {
+    setIsSaving(true);
+    try {
+      await updateSettings('user_preferences', prefs);
+      alert('Preferences saved! New ingestions will use these rules.');
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   return (
@@ -57,11 +78,55 @@ export default function Dashboard() {
         </div>
       </header>
 
-      <main>
+      <main className="max-w-6xl mx-auto">
+        <section className="bg-gray-800/50 border border-gray-700/50 rounded-xl p-6 mb-12 backdrop-blur-sm">
+          <h2 className="text-lg font-bold text-gray-200 mb-4 flex items-center">
+            <span className="mr-2">🎯</span> My Opportunity Preferences
+          </h2>
+          <div className="grid md:grid-cols-2 gap-6">
+            <div>
+              <label className="block text-xs font-bold text-gray-500 uppercase mb-2">Target Keywords</label>
+              <input
+                type="text"
+                placeholder="Software, AI, Product Manager..."
+                className="w-full bg-gray-900 border border-gray-700 rounded px-4 py-2 text-sm focus:border-blue-500 outline-none"
+                value={prefs.keywords.join(', ')}
+                onChange={(e) => setPrefs({ ...prefs, keywords: e.target.value.split(',').map(s => s.trim()) })}
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-gray-500 uppercase mb-2">Preferred Locations</label>
+              <input
+                type="text"
+                placeholder="Remote, London, New York..."
+                className="w-full bg-gray-900 border border-gray-700 rounded px-4 py-2 text-sm focus:border-blue-500 outline-none"
+                value={prefs.locations.join(', ')}
+                onChange={(e) => setPrefs({ ...prefs, locations: e.target.value.split(',').map(s => s.trim()) })}
+              />
+            </div>
+          </div>
+          <div className="mt-4 flex justify-end">
+            <button
+              onClick={handleSavePrefs}
+              disabled={isSaving}
+              className="text-xs font-bold text-blue-400 hover:text-blue-300 transition uppercase tracking-widest disabled:opacity-50"
+            >
+              {isSaving ? 'Saving...' : 'Update Scopes & Preferences'}
+            </button>
+          </div>
+        </section>
+
         {loading ? (
-          <div className="text-center py-20">Loading opportunities...</div>
+          <div className="text-center py-20">
+            <div className="inline-block animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-blue-500 mb-4"></div>
+            <div className="text-gray-400">Analyzing your network...</div>
+          </div>
         ) : opportunities.length === 0 ? (
-          <div className="text-center py-20 text-gray-500">No opportunities found yet. Connect Gmail and fetch some alerts!</div>
+          <div className="text-center py-20 bg-gray-800/20 border border-dashed border-gray-700 rounded-xl">
+            <div className="text-4xl mb-4">🔍</div>
+            <div className="text-gray-400">No opportunities found yet.</div>
+            <p className="text-sm text-gray-500 mt-2">Connect Gmail and click "Fetch New Ops" to start scanning.</p>
+          </div>
         ) : (
           <div className="grid gap-6">
             {opportunities.map((opp) => (

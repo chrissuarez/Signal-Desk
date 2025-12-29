@@ -12,6 +12,7 @@ dotenv.config({ path: path.join(__dirname, '../../.env') });
 
 import authRoutes from './routes/auth.js';
 import opportunityRoutes from './routes/opportunities.js';
+import settingsRoutes from './routes/settings.js';
 import { initWorker } from './worker/index.js';
 import { runIngestion } from './services/ingestionService.js';
 
@@ -24,6 +25,7 @@ app.use(express.json());
 
 app.use('/api/auth', authRoutes);
 app.use('/api/opportunities', opportunityRoutes);
+app.use('/api/settings', settingsRoutes);
 
 app.get('/api/ingest', async (req, res) => {
     try {

@@ -1,11 +1,8 @@
 export const sendImmediateAlert = async (opportunity: any) => {
-    console.log('--- IMMEDIATE ALERT ---');
-    console.log(`New High-Fit Opportunity Found!`);
-    console.log(`Title: ${opportunity.title}`);
-    console.log(`Company: ${opportunity.company}`);
-    console.log(`Fit Score: ${opportunity.fitScore}`);
-    console.log(`Reasons: ${opportunity.reasons.join(', ')}`);
-    console.log('------------------------');
+    console.log('🚀 🚀 🚀 IMMEDIATE ALERT 🚀 🚀 🚀');
+    console.log(`NEW HIGH-FIT OPPORTUNITY FOUND: ${opportunity.title} @ ${opportunity.company}`);
+    console.log(`Score: ${opportunity.fitScore} | Reasons: ${opportunity.reasons?.join(', ')}`);
+    console.log('--------------------------------------------');
 
     // In v1, this could be an email, Slack webhook, or push notification
     // For now, we log it to console as a delivered alert.

@@ -2,6 +2,7 @@ import { listMessages, getMessageContent } from './gmailIngestion.js';
 import { parseEmailBody, classifyOpportunity } from '../engine/parser.js';
 import { calculateFitScore } from '../engine/scoring.js';
 import { sendImmediateAlert } from './notificationService.js';
+import { analyzeOpportunityWithAI } from './aiService.js';
 import { db } from '../db/index.js';
 import { opportunities, settings } from '../db/schema.js';
 import { eq, and } from 'drizzle-orm';
@@ -31,34 +32,57 @@ export const runIngestion = async () => {
             const subject = content.payload?.headers?.find(h => h.name === 'Subject')?.value || 'No Subject';
             const from = content.payload?.headers?.find(h => h.name === 'From')?.value || 'Unknown';
 
-            const type = classifyOpportunity(body);
-            if (type === 'NOISE') {
+            let analysis;
+            if (process.env.GEMINI_API_KEY) {
+                console.log(`Analyzing message ${msg.id} with AI...`);
+                const fullBody = body; // In v2 we'd fetch the full body if snippet is too short
+                analysis = await analyzeOpportunityWithAI(fullBody);
+            } else {
+                // Fallback to basic heuristics
+                const type = classifyOpportunity(body);
+                const parsed = parseEmailBody(body);
+                analysis = {
+                    type,
+                    title: parsed.title === 'Unknown Position' ? subject : parsed.title,
+                    company: parsed.company,
+                    description: body,
+                    reasons: [],
+                    concerns: ['AI analysis skipped (no API key)']
+                };
+            }
+
+            if (analysis.type === 'NOISE') {
                 console.log(`Message ${msg.id} classified as NOISE. Skipping.`);
                 continue;
             }
 
-            const parsed = parseEmailBody(body);
+            // Fetch preferences
+            const prefsRecord = await db.query.settings.findFirst({
+                where: eq(settings.key, 'user_preferences')
+            });
+            const preferences = (prefsRecord?.value as any) || {
+                keywords: ['Software Engineer', 'AI', 'Fullstack', 'TypeScript'],
+                locations: ['Remote', 'London'],
+            };
+
             const fit = calculateFitScore({
-                title: parsed.title === 'Unknown Position' ? subject : parsed.title,
+                title: analysis.title,
                 description: body,
-                preferences: {
-                    keywords: ['Software Engineer', 'AI', 'Fullstack', 'TypeScript'], // Default preferences
-                    locations: ['Remote', 'London'],
-                },
+                preferences,
             });
 
             const inserted = await db.insert(opportunities).values({
-                type: type,
+                type: analysis.type,
                 source: 'EMAIL',
                 origin: from,
                 receivedAt: new Date(parseInt(content.internalDate || Date.now().toString())),
                 canonicalUrl: `gmail://${msg.id}`,
-                title: parsed.title === 'Unknown Position' ? subject : parsed.title,
-                company: parsed.company,
-                description: body,
+                title: analysis.title,
+                company: analysis.company,
+                description: analysis.description,
                 fitScore: fit.score,
-                reasons: fit.reasons,
-                concerns: fit.concerns,
+                reasons: [...analysis.reasons, ...fit.reasons],
+                concerns: [...analysis.concerns, ...fit.concerns],
                 status: 'NEW',
             }).returning();
 
@@ -66,7 +90,7 @@ export const runIngestion = async () => {
                 await sendImmediateAlert(inserted[0]);
             }
 
-            console.log(`Ingested ${parsed.title} at ${parsed.company} (Score: ${fit.score})`);
+            console.log(`Ingested ${analysis.title} at ${analysis.company} (Score: ${fit.score})`);
         }
 
         console.log('Ingestion run complete.');
