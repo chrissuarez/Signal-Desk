@@ -1,0 +1,46 @@
+@import "tailwindcss";
+
+@layer base {
+  body {
+    @apply bg-gray-900 text-white selection:bg-blue-500 selection:text-white;
+  }
+}
+
+@layer components {
+  .glass-card {
+    @apply bg-gray-800/50 backdrop-blur-md border border-gray-700/50 shadow-xl;
+  }
+  
+  .btn-primary {
+    @apply bg-blue-600 hover:bg-blue-500 text-white px-6 py-2 rounded-full font-bold transition-all hover:scale-105 active:scale-95 shadow-lg shadow-blue-500/20;
+  }
+}
+
+body {
+  background: radial-gradient(circle at top right, #1a202c, #0d1117);
+}
+
+:root {
+  --background: #ffffff;
+  --foreground: #171717;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0a0a0a;
+    --foreground: #ededed;
+  }
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: Arial, Helvetica, sans-serif;
+}

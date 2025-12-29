@@ -1,0 +1,28 @@
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: signal-desk-db
+    restart: always
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-signaldesk}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-signaldesk_pass}
+      POSTGRES_DB: ${POSTGRES_DB:-signaldesk}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  pgadmin:
+    image: dpage/pgadmin4
+    container_name: signal-desk-pgadmin
+    restart: always
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@signaldesk.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+    ports:
+      - "5050:80"
+    depends_on:
+      - db
+
+volumes:
+  postgres_data:

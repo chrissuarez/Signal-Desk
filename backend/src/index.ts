@@ -1,0 +1,46 @@
+import express from 'express';
+import cors from 'cors';
+import helmet from 'helmet';
+import dotenv from 'dotenv';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+dotenv.config({ path: path.join(__dirname, '../../.env') });
+
+import authRoutes from './routes/auth.js';
+import opportunityRoutes from './routes/opportunities.js';
+import { initWorker } from './worker/index.js';
+import { runIngestion } from './services/ingestionService.js';
+
+const app = express();
+const port = process.env.PORT || 4000;
+
+app.use(helmet());
+app.use(cors());
+app.use(express.json());
+
+app.use('/api/auth', authRoutes);
+app.use('/api/opportunities', opportunityRoutes);
+
+app.get('/api/ingest', async (req, res) => {
+    try {
+        await runIngestion();
+        res.json({ message: 'Ingestion triggered' });
+    } catch (error) {
+        res.status(500).json({ error: 'Ingestion failed' });
+    }
+});
+
+app.get('/health', (req, res) => {
+    res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+app.listen(port, () => {
+    console.log(`Server is running at http://localhost:${port}`);
+    initWorker();
+});
+
+export default app;
