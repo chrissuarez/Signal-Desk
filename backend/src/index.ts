@@ -29,10 +29,12 @@ app.use('/api/settings', settingsRoutes);
 
 app.get('/api/ingest', async (req, res) => {
     try {
-        await runIngestion();
-        res.json({ message: 'Ingestion triggered' });
+        const force = req.query.force === 'true';
+        const limit = parseInt(req.query.limit as string) || 50;
+        await runIngestion({ force, limit });
+        res.json({ success: true, message: `Ingestion started (Force: ${force}, Limit: ${limit})` });
     } catch (error) {
-        res.status(500).json({ error: 'Ingestion failed' });
+        res.status(500).json({ error: 'Failed to trigger ingestion' });
     }
 });
 

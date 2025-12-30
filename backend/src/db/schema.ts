@@ -13,6 +13,7 @@ export const opportunities = pgTable('opportunities', {
   origin: text('origin'), // sender or domain
   receivedAt: timestamp('received_at').defaultNow().notNull(),
   canonicalUrl: text('canonical_url').unique(),
+  sourceUrl: text('source_url'),
 
   title: text('title').notNull(),
   company: text('company'),

@@ -7,7 +7,7 @@ import { Opportunity } from '../types';
 export default function Dashboard() {
   const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
   const [loading, setLoading] = useState(true);
-  const [prefs, setPrefs] = useState({ keywords: [], locations: [] });
+  const [prefs, setPrefs] = useState<{ keywords: string[], locations: string[] }>({ keywords: [], locations: [] });
   const [isSaving, setIsSaving] = useState(false);
 
   const loadData = async () => {
@@ -33,9 +33,23 @@ export default function Dashboard() {
     loadData();
   }, []);
 
+  const [reprocessCount, setReprocessCount] = useState(1);
+
   const handleIngest = async () => {
     await triggerIngestion();
     loadData();
+  };
+
+  const handleReprocess = async () => {
+    setLoading(true);
+    try {
+      await triggerIngestion(true, reprocessCount);
+      loadData();
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleFeedback = async (id: number, action: string) => {
@@ -62,7 +76,24 @@ export default function Dashboard() {
           <h1 className="text-3xl font-bold text-blue-400">Signal Desk</h1>
           <p className="text-gray-400">Opportunity Agent Dashboard</p>
         </div>
-        <div className="space-x-4">
+        <div className="flex items-center space-x-4">
+          <div className="flex items-center bg-gray-800 border border-gray-700 rounded p-1">
+            <input
+              type="number"
+              min="1"
+              max="100"
+              value={reprocessCount}
+              onChange={(e) => setReprocessCount(parseInt(e.target.value))}
+              className="bg-transparent w-12 text-center text-sm outline-none"
+            />
+            <button
+              onClick={handleReprocess}
+              className="bg-yellow-600 hover:bg-yellow-700 px-3 py-1 rounded text-xs font-bold transition ml-1"
+              title="Force re-scan existing emails"
+            >
+              Reprocess
+            </button>
+          </div>
           <button
             onClick={handleIngest}
             className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded font-medium transition"
@@ -133,7 +164,18 @@ export default function Dashboard() {
               <div key={opp.id} className="bg-gray-800 border border-gray-700 rounded-lg p-6 shadow-lg hover:border-gray-600 transition">
                 <div className="flex justify-between items-start mb-4">
                   <div>
-                    <h2 className="text-xl font-bold text-white">{opp.title}</h2>
+                    {opp.sourceUrl ? (
+                      <a
+                        href={opp.sourceUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xl font-bold text-blue-400 hover:text-blue-300 underline underline-offset-4 transition"
+                      >
+                        {opp.title}
+                      </a>
+                    ) : (
+                      <h2 className="text-xl font-bold text-white">{opp.title}</h2>
+                    )}
                     <p className="text-blue-300 font-medium">{opp.company}</p>
                   </div>
                   <div className="flex flex-col items-end">

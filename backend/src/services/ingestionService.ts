@@ -7,36 +7,37 @@ import { db } from '../db/index.js';
 import { opportunities, settings } from '../db/schema.js';
 import { eq, and } from 'drizzle-orm';
 
-export const runIngestion = async () => {
-    console.log('Starting ingestion run...');
+export const runIngestion = async (options: { force?: boolean, limit?: number } = {}) => {
+    const { force = false, limit = 50 } = options;
+    console.log(`Starting ingestion run (Force: ${force}, Limit: ${limit})...`);
 
     try {
-        const messages = await listMessages();
-        console.log(`Found ${messages.length} messages to process.`);
+        const messages = await listMessages('Job Alerts', Math.ceil(limit / 50));
+        const messagesToProcess = messages.slice(0, limit);
+        console.log(`Found ${messages.length} messages. Processing up to ${limit}.`);
 
-        for (const msg of messages) {
+        for (const msg of messagesToProcess) {
             if (!msg.id) continue;
 
             // Check for deduplication
             const existing = await db.query.opportunities.findFirst({
-                where: eq(opportunities.canonicalUrl, `gmail://${msg.id}`), // Using msgId as canonicalUrl for now
+                where: eq(opportunities.canonicalUrl, `gmail://${msg.id}`),
             });
 
-            if (existing) {
+            if (existing && !force) {
                 console.log(`Message ${msg.id} already processed. Skipping.`);
                 continue;
             }
 
-            const content = await getMessageContent(msg.id);
-            const body = content.snippet || ''; // Simplify for v1
-            const subject = content.payload?.headers?.find(h => h.name === 'Subject')?.value || 'No Subject';
-            const from = content.payload?.headers?.find(h => h.name === 'From')?.value || 'Unknown';
+            const content = (await getMessageContent(msg.id)) as any;
+            const body = content.fullBody || content.snippet || '';
+            const subject = content.payload?.headers?.find((h: any) => h.name === 'Subject')?.value || 'No Subject';
+            const from = content.payload?.headers?.find((h: any) => h.name === 'From')?.value || 'Unknown';
 
             let analysis;
             if (process.env.GEMINI_API_KEY) {
-                console.log(`Analyzing message ${msg.id} with AI...`);
-                const fullBody = body; // In v2 we'd fetch the full body if snippet is too short
-                analysis = await analyzeOpportunityWithAI(fullBody);
+                console.log(`Analyzing message ${msg.id} with AI (Length: ${body.length})...`);
+                analysis = await analyzeOpportunityWithAI(body);
             } else {
                 // Fallback to basic heuristics
                 const type = classifyOpportunity(body);
@@ -80,10 +81,23 @@ export const runIngestion = async () => {
                 title: analysis.title,
                 company: analysis.company,
                 description: analysis.description,
+                sourceUrl: analysis.sourceUrl || null,
                 fitScore: fit.score,
                 reasons: [...analysis.reasons, ...fit.reasons],
                 concerns: [...analysis.concerns, ...fit.concerns],
                 status: 'NEW',
+            }).onConflictDoUpdate({
+                target: opportunities.canonicalUrl,
+                set: {
+                    title: analysis.title,
+                    company: analysis.company,
+                    description: analysis.description,
+                    sourceUrl: analysis.sourceUrl || null,
+                    fitScore: fit.score,
+                    reasons: [...analysis.reasons, ...fit.reasons],
+                    concerns: [...analysis.concerns, ...fit.concerns],
+                    updatedAt: new Date(),
+                }
             }).returning();
 
             if (fit.score >= 80 && inserted[0]) {

@@ -32,8 +32,8 @@ export async function updateSettings(key: string, value: any) {
     return response.json();
 }
 
-export const triggerIngestion = async () => {
-    const res = await fetch(`${API_BASE_URL}/ingest`);
+export const triggerIngestion = async (force: boolean = false, limit: number = 50) => {
+    const res = await fetch(`${API_BASE_URL}/ingest?force=${force}&limit=${limit}`);
     if (!res.ok) throw new Error('Failed to trigger ingestion');
     return res.json();
 };

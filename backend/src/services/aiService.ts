@@ -16,6 +16,7 @@ export interface AIAnalysisResult {
     title: string;
     company: string;
     description: string;
+    sourceUrl?: string;
     reasons: string[];
     concerns: string[];
 }
@@ -26,17 +27,22 @@ export const analyzeOpportunityWithAI = async (text: string): Promise<AIAnalysis
     }
 
     const prompt = `
-    Analyze the following email content and determine if it is a specific job opportunity, a business opportunity (tender/contract), or noise (newsletters, promotions, spam, general info).
+    Analyze the following email content and determine if it contains specific job opportunities, business opportunities (tenders/contracts), or is just noise (newsletters, promotions, spam).
     
-    If it is a JOB or BUSINESS opportunity, extract the title and company.
-    Provide a list of reasons why it qualifies and any concerns.
+    NOTE: This email may be a "digest" or "job alert" listing multiple roles. In this case, identify the most significant or relevant professional role described.
+    
+    If it contains a JOB or BUSINESS opportunity:
+    1. Extract the title and company.
+    2. Extract the direct link (URL) to the position if available in the text.
+    3. Provide a list of reasons why it qualifies and any concerns.
     
     Return the result EXACTLY in the following JSON format:
     {
       "type": "JOB" | "BUSINESS" | "NOISE",
-      "title": "Extracted Title",
+      "title": "Extracted Title (or descriptive summary if multiple relevant roles)",
       "company": "Extracted Company",
-      "description": "Brief summarized description (max 200 words)",
+      "description": "Brief summarized description (max 200 words). If multiple roles, mention the top 2-3.",
+      "sourceUrl": "Direct URL to the position/job page if found, otherwise null",
       "reasons": ["reason 1", "reason 2"],
       "concerns": ["concern 1", "concern 2"]
     }

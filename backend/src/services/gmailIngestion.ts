@@ -69,5 +69,31 @@ export const getMessageContent = async (messageId: string) => {
         format: 'full',
     });
 
-    return res.data;
+    const payload = res.data.payload;
+    let body = '';
+
+    if (payload?.parts) {
+        const textPart = payload.parts.find(p => p.mimeType === 'text/plain');
+        if (textPart?.body?.data) {
+            body = Buffer.from(textPart.body.data, 'base64').toString('utf-8');
+        } else {
+            // Check nested parts
+            for (const part of payload.parts) {
+                if (part.parts) {
+                    const nestedText = part.parts.find(p => p.mimeType === 'text/plain');
+                    if (nestedText?.body?.data) {
+                        body = Buffer.from(nestedText.body.data, 'base64').toString('utf-8');
+                        break;
+                    }
+                }
+            }
+        }
+    } else if (payload?.body?.data) {
+        body = Buffer.from(payload.body.data, 'base64').toString('utf-8');
+    }
+
+    return {
+        ...res.data,
+        fullBody: body || res.data.snippet || ''
+    };
 };

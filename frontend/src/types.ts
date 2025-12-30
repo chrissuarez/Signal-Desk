@@ -10,6 +10,7 @@ export interface Opportunity {
     origin: string | null;
     receivedAt: string;
     canonicalUrl: string | null;
+    sourceUrl?: string | null;
     title: string;
     company: string | null;
     location: string | null;

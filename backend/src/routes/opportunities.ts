@@ -20,8 +20,17 @@ router.get('/', async (req, res) => {
 router.post('/:id/feedback', async (req, res) => {
     const { id } = req.params;
     const { action } = req.body;
-    // TODO: Record feedback in feedback table and update opportunity status
+
     try {
+        const opportunityId = parseInt(id);
+
+        // 1. Record the feedback event
+        await db.insert(feedback).values({
+            opportunityId,
+            action: action as any,
+        });
+
+        // 2. Update the opportunity status
         const statusMap: Record<string, any> = {
             'LIKE': 'SAVED',
             'DISLIKE': 'DISMISSED',
@@ -31,11 +40,12 @@ router.post('/:id/feedback', async (req, res) => {
         if (statusMap[action]) {
             await db.update(opportunities)
                 .set({ status: statusMap[action] })
-                .where(eq(opportunities.id, parseInt(id)));
+                .where(eq(opportunities.id, opportunityId));
         }
 
-        res.json({ message: 'Feedback received' });
+        res.json({ message: 'Feedback recorded and status updated' });
     } catch (error) {
+        console.error('Feedback error:', error);
         res.status(500).json({ error: 'Failed to submit feedback' });
     }
 });
