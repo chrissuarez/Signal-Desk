@@ -20,10 +20,6 @@ services:
     restart: always
     environment:
       POSTGRES_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-signal_desk}
-      GEMINI_API_KEY: ${GEMINI_API_KEY}
-      GMAIL_CLIENT_ID: ${GMAIL_CLIENT_ID}
-      GMAIL_CLIENT_SECRET: ${GMAIL_CLIENT_SECRET}
-      GMAIL_REDIRECT_URI: ${GMAIL_REDIRECT_URI}
       NODE_ENV: production
     env_file:
       - ../../.env
@@ -39,8 +35,6 @@ services:
     command: tunnel --no-autoupdate run
     env_file:
       - ../../.env
-    environment:
-      TUNNEL_TOKEN: ${TUNNEL_TOKEN}
 
 volumes:
   postgres_data:
