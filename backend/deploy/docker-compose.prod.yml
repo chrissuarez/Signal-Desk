@@ -28,13 +28,13 @@ services:
     ports:
       - "4000:4000"
 
-  cloudflared:
-    image: cloudflare/cloudflared:latest
-    container_name: signal-desk-tunnel
-    restart: always
-    command: tunnel --no-autoupdate run
-    env_file:
-      - ../../.env
+#  cloudflared:
+#    image: cloudflare/cloudflared:latest
+#    container_name: signal-desk-tunnel
+#    restart: always
+#    command: tunnel --no-autoupdate run
+#    env_file:
+#      - ../../.env
 
 volumes:
   postgres_data:
