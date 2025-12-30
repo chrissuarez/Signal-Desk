@@ -42,6 +42,7 @@
   "exclude": [
     "node_modules",
     "dist",
-    "drizzle.config.ts"
+    "drizzle.config.ts",
+    "src/listModels.ts"
   ]
 }

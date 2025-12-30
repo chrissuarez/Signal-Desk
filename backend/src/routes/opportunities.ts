@@ -1,6 +1,6 @@
 import type { Opportunity } from '../types.js';
 import { db } from '../db/index.js';
-import { opportunities } from '../db/schema.js';
+import { opportunities, feedback } from '../db/schema.js';
 import { desc, eq } from 'drizzle-orm';
 import { Router } from 'express';
 
