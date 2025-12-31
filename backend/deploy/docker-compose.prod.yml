@@ -6,7 +6,7 @@ services:
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
-      POSTGRES_DB: ${POSTGRES_DB:-signal_desk}
+      POSTGRES_DB: ${POSTGRES_DB:-signaldesk}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
@@ -19,7 +19,7 @@ services:
     container_name: signal-desk-backend
     restart: always
     environment:
-      POSTGRES_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-signal_desk}
+      DATABASE_URL: postgres://${POSTGRES_USER:-signaldesk}:${POSTGRES_PASSWORD:-signaldesk_pass}@db:5432/${POSTGRES_DB:-signaldesk}
       NODE_ENV: production
     env_file:
       - ../../.env
