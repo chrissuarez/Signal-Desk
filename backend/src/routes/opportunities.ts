@@ -9,7 +9,7 @@ const router = Router();
 router.get('/', async (req, res) => {
     try {
         const items = await db.query.opportunities.findMany({
-            orderBy: [desc(opportunities.receivedAt)],
+            orderBy: [desc(opportunities.fitScore), desc(opportunities.receivedAt)],
         });
         console.log(`Fetched ${items.length} opportunities for display.`);
         res.json(items);

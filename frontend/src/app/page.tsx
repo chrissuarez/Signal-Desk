@@ -11,6 +11,7 @@ export default function Dashboard() {
   const [isSaving, setIsSaving] = useState(false);
   const [keywordInput, setKeywordInput] = useState('');
   const [locationInput, setLocationInput] = useState('');
+  const [activeTab, setActiveTab] = useState<'ALL' | 'SAVED' | 'NEW'>('ALL');
 
   const loadData = async () => {
     setLoading(true);
@@ -156,6 +157,21 @@ export default function Dashboard() {
           </div>
         </section>
 
+        <div className="flex space-x-2 mb-6">
+          {(['ALL', 'NEW', 'SAVED'] as const).map(tab => (
+            <button
+              key={tab}
+              onClick={() => setActiveTab(tab)}
+              className={`px-4 py-2 rounded-lg text-sm font-bold transition ${activeTab === tab
+                ? 'bg-blue-600 text-white'
+                : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
+                }`}
+            >
+              {tab === 'ALL' ? 'Everything' : tab === 'SAVED' ? 'Liked' : 'New'}
+            </button>
+          ))}
+        </div>
+
         {loading ? (
           <div className="text-center py-20">
             <div className="inline-block animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-blue-500 mb-4"></div>
@@ -169,72 +185,78 @@ export default function Dashboard() {
           </div>
         ) : (
           <div className="grid gap-6">
-            {opportunities.map((opp) => (
-              <div key={opp.id} className="bg-gray-800 border border-gray-700 rounded-lg p-6 shadow-lg hover:border-gray-600 transition">
-                <div className="flex justify-between items-start mb-4">
-                  <div>
-                    {opp.sourceUrl ? (
-                      <a
-                        href={opp.sourceUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-xl font-bold text-blue-400 hover:text-blue-300 underline underline-offset-4 transition"
-                      >
-                        {opp.title}
-                      </a>
-                    ) : (
-                      <h2 className="text-xl font-bold text-white">{opp.title}</h2>
-                    )}
-                    <p className="text-blue-300 font-medium">{opp.company}</p>
+            {opportunities
+              .filter(opp => {
+                if (activeTab === 'ALL') return true;
+                if (activeTab === 'SAVED') return opp.status === 'SAVED' || opp.status === 'APPLIED';
+                return opp.status === 'NEW';
+              })
+              .map((opp) => (
+                <div key={opp.id} className="bg-gray-800 border border-gray-700 rounded-lg p-6 shadow-lg hover:border-gray-600 transition">
+                  <div className="flex justify-between items-start mb-4">
+                    <div>
+                      {opp.sourceUrl ? (
+                        <a
+                          href={opp.sourceUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-xl font-bold text-blue-400 hover:text-blue-300 underline underline-offset-4 transition"
+                        >
+                          {opp.title}
+                        </a>
+                      ) : (
+                        <h2 className="text-xl font-bold text-white">{opp.title}</h2>
+                      )}
+                      <p className="text-blue-300 font-medium">{opp.company}</p>
+                    </div>
+                    <div className="flex flex-col items-end">
+                      <span className={`px-3 py-1 rounded-full text-sm font-bold ${opp.fitScore >= 80 ? 'bg-green-600' : opp.fitScore >= 60 ? 'bg-yellow-600' : 'bg-gray-600'
+                        }`}>
+                        Score: {opp.fitScore}
+                      </span>
+                      <span className="text-xs text-gray-500 mt-1 uppercase tracking-wider">{opp.status}</span>
+                    </div>
                   </div>
-                  <div className="flex flex-col items-end">
-                    <span className={`px-3 py-1 rounded-full text-sm font-bold ${opp.fitScore >= 80 ? 'bg-green-600' : opp.fitScore >= 60 ? 'bg-yellow-600' : 'bg-gray-600'
-                      }`}>
-                      Score: {opp.fitScore}
-                    </span>
-                    <span className="text-xs text-gray-500 mt-1 uppercase tracking-wider">{opp.status}</span>
-                  </div>
-                </div>
 
-                <div className="mb-4">
-                  <h3 className="text-sm font-bold text-gray-400 uppercase mb-2">Why it fits:</h3>
-                  <ul className="list-disc list-inside text-gray-300 text-sm">
-                    {opp.reasons?.map((r, i) => <li key={i}>{r}</li>)}
-                  </ul>
-                </div>
-
-                {opp.concerns && opp.concerns.length > 0 && (
                   <div className="mb-4">
-                    <h3 className="text-sm font-bold text-red-400/80 uppercase mb-2">Concerns:</h3>
-                    <ul className="list-disc list-inside text-gray-400 text-sm">
-                      {opp.concerns?.map((c, i) => <li key={i}>{c}</li>)}
+                    <h3 className="text-sm font-bold text-gray-400 uppercase mb-2">Why it fits:</h3>
+                    <ul className="list-disc list-inside text-gray-300 text-sm">
+                      {opp.reasons?.map((r, i) => <li key={i}>{r}</li>)}
                     </ul>
                   </div>
-                )}
 
-                <div className="flex justify-between items-center mt-6 pt-4 border-t border-gray-700">
-                  <div className="text-xs text-gray-500">
-                    Source: {opp.source} | Received: {new Date(opp.receivedAt).toLocaleDateString()}
-                  </div>
-                  <div className="space-x-3">
-                    <button
-                      onClick={() => handleFeedback(opp.id, 'LIKE')}
-                      className="text-gray-400 hover:text-green-400 p-2 rounded-full hover:bg-gray-700 transition"
-                      title="Keep this"
-                    >
-                      👍
-                    </button>
-                    <button
-                      onClick={() => handleFeedback(opp.id, 'DISLIKE')}
-                      className="text-gray-400 hover:text-red-400 p-2 rounded-full hover:bg-gray-700 transition"
-                      title="Ignore this"
-                    >
-                      👎
-                    </button>
+                  {opp.concerns && opp.concerns.length > 0 && (
+                    <div className="mb-4">
+                      <h3 className="text-sm font-bold text-red-400/80 uppercase mb-2">Concerns:</h3>
+                      <ul className="list-disc list-inside text-gray-400 text-sm">
+                        {opp.concerns?.map((c, i) => <li key={i}>{c}</li>)}
+                      </ul>
+                    </div>
+                  )}
+
+                  <div className="flex justify-between items-center mt-6 pt-4 border-t border-gray-700">
+                    <div className="text-xs text-gray-500">
+                      Source: {opp.source} | Received: {new Date(opp.receivedAt).toLocaleDateString()}
+                    </div>
+                    <div className="space-x-3">
+                      <button
+                        onClick={() => handleFeedback(opp.id, 'LIKE')}
+                        className="text-gray-400 hover:text-green-400 p-2 rounded-full hover:bg-gray-700 transition"
+                        title="Keep this"
+                      >
+                        👍
+                      </button>
+                      <button
+                        onClick={() => handleFeedback(opp.id, 'DISLIKE')}
+                        className="text-gray-400 hover:text-red-400 p-2 rounded-full hover:bg-gray-700 transition"
+                        title="Ignore this"
+                      >
+                        👎
+                      </button>
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
+              ))}
           </div>
         )}
       </main>
