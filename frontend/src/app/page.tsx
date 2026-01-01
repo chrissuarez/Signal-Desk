@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { fetchOpportunities, triggerIngestion, submitFeedback, fetchSettings, updateSettings } from '@/lib/api';
+import { fetchOpportunities, triggerIngestion, submitFeedback, fetchSettings, updateSettings, API_BASE_URL } from '@/lib/api';
 import { Opportunity } from '../types';
 
 export default function Dashboard() {
@@ -101,7 +101,7 @@ export default function Dashboard() {
             Fetch New Ops
           </button>
           <a
-            href="http://localhost:4000/api/auth/google/login"
+            href={`${API_BASE_URL}/auth/google/login`}
             className="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded font-medium transition inline-block"
           >
             Connect Gmail
