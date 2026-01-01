@@ -22,6 +22,7 @@ router.post('/:key', async (req, res) => {
     try {
         const { key } = req.params;
         const value = req.body;
+        console.log(`Updating setting [${key}] with body:`, JSON.stringify(value));
 
         await db.insert(settings)
             .values({ key, value })
@@ -32,6 +33,7 @@ router.post('/:key', async (req, res) => {
 
         res.json({ success: true });
     } catch (error) {
+        console.error(`Failed to update settings for ${req.params.key}:`, error);
         res.status(500).json({ error: 'Failed to update settings' });
     }
 });

@@ -14,7 +14,11 @@ export const runIngestion = async (options: { force?: boolean, limit?: number } 
     try {
         const messages = await listMessages('Job Alerts', Math.ceil(limit / 50));
         const messagesToProcess = messages.slice(0, limit);
-        console.log(`Found ${messages.length} messages. Processing up to ${limit}.`);
+        if (messages.length === 0) {
+            console.log('No messages found to process. Check your GMAIL_LABEL or if emails are arriving.');
+        } else {
+            console.log(`Found ${messages.length} messages. Processing up to ${limit}.`);
+        }
 
         for (const msg of messagesToProcess) {
             if (!msg.id) continue;

@@ -19,7 +19,8 @@ export const getGmailService = async () => {
     return google.gmail({ version: 'v1', auth });
 };
 
-export const listMessages = async (labelName: string = 'Job Alerts', maxPages: number = 5) => {
+export const listMessages = async (labelName: string = process.env.GMAIL_LABEL || 'Job Alerts', maxPages: number = 5) => {
+    console.log(`Searching for messages with label: ${labelName}`);
     const gmail = await getGmailService();
 
     // Find label ID
