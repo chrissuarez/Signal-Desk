@@ -11,6 +11,7 @@ router.get('/', async (req, res) => {
         const items = await db.query.opportunities.findMany({
             orderBy: [desc(opportunities.receivedAt)],
         });
+        console.log(`Fetched ${items.length} opportunities for display.`);
         res.json(items);
     } catch (error) {
         res.status(500).json({ error: 'Failed to fetch opportunities' });
