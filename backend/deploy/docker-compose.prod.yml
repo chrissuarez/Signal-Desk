@@ -4,8 +4,8 @@ services:
     container_name: signal-desk-db
     restart: always
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_USER: ${POSTGRES_USER:-signaldesk}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-signaldesk_pass}
       POSTGRES_DB: ${POSTGRES_DB:-signaldesk}
     volumes:
       - postgres_data:/var/lib/postgresql/data
