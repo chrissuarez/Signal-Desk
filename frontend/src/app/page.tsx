@@ -9,6 +9,8 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [prefs, setPrefs] = useState<{ keywords: string[], locations: string[] }>({ keywords: [], locations: [] });
   const [isSaving, setIsSaving] = useState(false);
+  const [keywordInput, setKeywordInput] = useState('');
+  const [locationInput, setLocationInput] = useState('');
 
   const loadData = async () => {
     setLoading(true);
@@ -22,6 +24,8 @@ export default function Dashboard() {
         keywords: prefsData.keywords || ['Software Engineer', 'AI', 'Fullstack', 'TypeScript'],
         locations: prefsData.locations || ['Remote', 'London'],
       });
+      setKeywordInput((prefsData.keywords || ['Software Engineer', 'AI', 'Fullstack', 'TypeScript']).join(', '));
+      setLocationInput((prefsData.locations || ['Remote', 'London']).join(', '));
     } catch (error) {
       console.error(error);
     } finally {
@@ -60,7 +64,12 @@ export default function Dashboard() {
   const handleSavePrefs = async () => {
     setIsSaving(true);
     try {
-      await updateSettings('user_preferences', prefs);
+      const updatedPrefs = {
+        keywords: keywordInput.split(',').map(s => s.trim()).filter(Boolean),
+        locations: locationInput.split(',').map(s => s.trim()).filter(Boolean),
+      };
+      await updateSettings('user_preferences', updatedPrefs);
+      setPrefs(updatedPrefs);
       alert('Preferences saved! New ingestions will use these rules.');
     } catch (error) {
       console.error(error);
@@ -121,8 +130,8 @@ export default function Dashboard() {
                 type="text"
                 placeholder="Software, AI, Product Manager..."
                 className="w-full bg-gray-900 border border-gray-700 rounded px-4 py-2 text-sm focus:border-blue-500 outline-none"
-                value={prefs.keywords.join(', ')}
-                onChange={(e) => setPrefs({ ...prefs, keywords: e.target.value.split(',').map(s => s.trim()) })}
+                value={keywordInput}
+                onChange={(e) => setKeywordInput(e.target.value)}
               />
             </div>
             <div>
@@ -131,8 +140,8 @@ export default function Dashboard() {
                 type="text"
                 placeholder="Remote, London, New York..."
                 className="w-full bg-gray-900 border border-gray-700 rounded px-4 py-2 text-sm focus:border-blue-500 outline-none"
-                value={prefs.locations.join(', ')}
-                onChange={(e) => setPrefs({ ...prefs, locations: e.target.value.split(',').map(s => s.trim()) })}
+                value={locationInput}
+                onChange={(e) => setLocationInput(e.target.value)}
               />
             </div>
           </div>
