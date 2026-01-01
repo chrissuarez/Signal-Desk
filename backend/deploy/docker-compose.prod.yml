@@ -20,6 +20,11 @@ services:
     restart: always
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-signaldesk}:${POSTGRES_PASSWORD:-signaldesk_pass}@db:5432/${POSTGRES_DB:-signaldesk}
+      GMAIL_REDIRECT_URI: ${GMAIL_REDIRECT_URI}
+      GMAIL_CLIENT_ID: ${GMAIL_CLIENT_ID}
+      GMAIL_CLIENT_SECRET: ${GMAIL_CLIENT_SECRET}
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      FRONTEND_URL: ${FRONTEND_URL}
       NODE_ENV: production
     env_file:
       - ../../.env

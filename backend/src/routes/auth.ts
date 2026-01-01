@@ -41,7 +41,7 @@ router.get('/google/callback', async (req, res) => {
             });
 
         // Redirect back to frontend
-        const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+        const frontendUrl = process.env.FRONTEND_URL || 'https://signal-desk.pages.dev';
         res.redirect(`${frontendUrl}?auth=success`);
     } catch (error) {
         console.error('Error getting tokens:', error);
