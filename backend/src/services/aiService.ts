@@ -21,31 +21,33 @@ export interface AIAnalysisResult {
     concerns: string[];
 }
 
-export const analyzeOpportunityWithAI = async (text: string): Promise<AIAnalysisResult> => {
+export const analyzeOpportunityWithAI = async (text: string): Promise<AIAnalysisResult[]> => {
     if (!process.env.GEMINI_API_KEY) {
         throw new Error('GEMINI_API_KEY is not set');
     }
 
     const prompt = `
-    Analyze the following email content and determine if it contains specific job opportunities, business opportunities (tenders/contracts), or is just noise (newsletters, promotions, spam).
-    
-    NOTE: This email may be a "digest" or "job alert" listing multiple roles. In this case, identify the most significant or relevant professional role described.
-    
-    If it contains a JOB or BUSINESS opportunity:
+    Analyze the following email content and extract ALL specific job opportunities or business opportunities (tenders/contracts). 
+    If the email is a digest, job alert, or listing, extract EVERY distinct role or opportunity mentioned.
+    If no opportunities are found, return a single entry with type "NOISE".
+
+    For each JOB or BUSINESS opportunity:
     1. Extract the title and company.
     2. Extract the direct link (URL) to the position if available in the text.
     3. Provide a list of reasons why it qualifies and any concerns.
     
-    Return the result EXACTLY in the following JSON format:
-    {
-      "type": "JOB" | "BUSINESS" | "NOISE",
-      "title": "Extracted Title (or descriptive summary if multiple relevant roles)",
-      "company": "Extracted Company",
-      "description": "Brief summarized description (max 200 words). If multiple roles, mention the top 2-3.",
-      "sourceUrl": "Direct URL to the position/job page if found, otherwise null",
-      "reasons": ["reason 1", "reason 2"],
-      "concerns": ["concern 1", "concern 2"]
-    }
+    Return the result EXACTLY as a JSON array of objects:
+    [
+      {
+        "type": "JOB" | "BUSINESS" | "NOISE",
+        "title": "Extracted Title",
+        "company": "Extracted Company",
+        "description": "Brief summarized description (max 100 words).",
+        "sourceUrl": "Direct URL if found, otherwise null",
+        "reasons": ["reason 1", "reason 2"],
+        "concerns": ["concern 1", "concern 2"]
+      }
+    ]
     
     Email Content:
     ${text}
@@ -54,18 +56,19 @@ export const analyzeOpportunityWithAI = async (text: string): Promise<AIAnalysis
     try {
         const result = await model.generateContent(prompt);
         const response = await result.response;
-        const jsonStr = response.text().replace(/```json|```/g, '').trim();
-        return JSON.parse(jsonStr) as AIAnalysisResult;
+        const textResponse = response.text();
+        const jsonStr = textResponse.replace(/```json|```/g, '').trim();
+        const parsed = JSON.parse(jsonStr);
+        return Array.isArray(parsed) ? parsed : [parsed];
     } catch (error) {
         console.error('AI Analysis failed:', error);
-        // Fallback to basic noise if AI fails
-        return {
+        return [{
             type: 'NOISE',
             title: 'Unknown',
             company: 'Unknown',
             description: text,
             reasons: [],
             concerns: ['AI Analysis failed']
-        };
+        }];
     }
 };
