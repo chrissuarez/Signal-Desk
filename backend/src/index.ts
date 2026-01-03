@@ -20,21 +20,28 @@ const app = express();
 const port = process.env.PORT || 4000;
 
 app.use((req, res, next) => {
-    console.log(`${new Date().toISOString()} - ${req.method} ${req.url} - Origin: ${req.headers.origin}`);
+    console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
+    console.log(`  Origin: ${req.headers.origin}`);
+    console.log(`  Headers: ${JSON.stringify(req.headers)}`);
     next();
 });
 
 app.use(helmet());
 app.use(cors({
     origin: (origin, callback) => {
-        const allowed = [process.env.FRONTEND_URL, 'http://localhost:3000', 'https://signal-desk-bdq.pages.dev'].filter(Boolean);
-        if (!origin || allowed.some(a => origin.startsWith(a!)) || origin.endsWith('.pages.dev')) {
+        const allowed = [process.env.FRONTEND_URL, 'http://localhost:3000'].filter(Boolean);
+        const isAllowed = !origin || allowed.some(a => origin.startsWith(a!)) || origin.endsWith('.pages.dev');
+
+        if (isAllowed) {
             callback(null, true);
         } else {
+            console.warn(`CORS Rejected for origin: ${origin}`);
             callback(new Error('Not allowed by CORS'));
         }
     },
-    credentials: true
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'Cookie']
 }));
 app.use(express.json());
 
