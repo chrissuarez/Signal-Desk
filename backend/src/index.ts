@@ -19,6 +19,11 @@ import { runIngestion } from './services/ingestionService.js';
 const app = express();
 const port = process.env.PORT || 4000;
 
+app.use((req, res, next) => {
+    console.log(`${new Date().toISOString()} - ${req.method} ${req.url} - Origin: ${req.headers.origin}`);
+    next();
+});
+
 app.use(helmet());
 app.use(cors({
     origin: (origin, callback) => {
