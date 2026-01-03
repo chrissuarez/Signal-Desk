@@ -23,7 +23,7 @@ app.use(helmet());
 app.use(cors({
     origin: (origin, callback) => {
         const allowed = [process.env.FRONTEND_URL, 'http://localhost:3000', 'https://signal-desk-bdq.pages.dev'].filter(Boolean);
-        if (!origin || allowed.some(a => origin.startsWith(a!))) {
+        if (!origin || allowed.some(a => origin.startsWith(a!)) || origin.endsWith('.pages.dev')) {
             callback(null, true);
         } else {
             callback(new Error('Not allowed by CORS'));
