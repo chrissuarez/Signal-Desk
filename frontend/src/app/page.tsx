@@ -75,7 +75,7 @@ export default function Dashboard() {
   };
 
   const handleSavePrefs = async () => {
-    console.log('handleSavePrefs clicked');
+    alert('DEBUG: handleSavePrefs started');
     setIsSaving(true);
     try {
       const updatedPrefs = {
@@ -89,7 +89,8 @@ export default function Dashboard() {
       setPrefs(updatedPrefs);
       alert('Preferences saved! New ingestions will use these rules.');
     } catch (error) {
-      console.error(error);
+      console.error('Failed to save preferences:', error);
+      alert('Failed to save preferences. See console for details.');
     } finally {
       setIsSaving(false);
     }
