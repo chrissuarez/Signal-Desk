@@ -19,30 +19,27 @@ import { runIngestion } from './services/ingestionService.js';
 const app = express();
 const port = process.env.PORT || 4000;
 
+// 1. CORS MUST be at the very top for preflights to succeed
+app.use(cors({
+    origin: true,
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'Cookie', 'X-Requested-With'],
+    preflightContinue: false,
+    optionsSuccessStatus: 204
+}));
+
+// 2. Logging comes after CORS
 app.use((req, res, next) => {
     console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
     console.log(`  Origin: ${req.headers.origin}`);
-    console.log(`  Headers: ${JSON.stringify(req.headers)}`);
+    if (req.method === 'OPTIONS') {
+        console.log('  Handling Preflight (OPTIONS)');
+    }
     next();
 });
 
 app.use(helmet());
-app.use(cors({
-    origin: (origin, callback) => {
-        const allowed = [process.env.FRONTEND_URL, 'http://localhost:3000'].filter(Boolean);
-        const isAllowed = !origin || allowed.some(a => origin.startsWith(a!)) || origin.endsWith('.pages.dev');
-
-        if (isAllowed) {
-            callback(null, true);
-        } else {
-            console.warn(`CORS Rejected for origin: ${origin}`);
-            callback(new Error('Not allowed by CORS'));
-        }
-    },
-    credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'Cookie']
-}));
 app.use(express.json());
 
 app.use('/api/auth', authRoutes);
