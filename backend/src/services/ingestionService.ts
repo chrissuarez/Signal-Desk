@@ -28,6 +28,18 @@ export const runIngestion = async (options: { force?: boolean, limit?: number } 
             const subject = content.payload?.headers?.find((h: any) => h.name === 'Subject')?.value || 'No Subject';
             const from = content.payload?.headers?.find((h: any) => h.name === 'From')?.value || 'Unknown';
 
+            // COST OPTIMIZATION: Check if this message was already processed 
+            // by looking for the first indexed job (#0)
+            if (!force) {
+                const alreadyProcessed = await db.query.opportunities.findFirst({
+                    where: eq(opportunities.canonicalUrl, `gmail://${msg.id}#0`),
+                });
+                if (alreadyProcessed) {
+                    console.log(`Message ${msg.id} already analyzed. Skipping AI call.`);
+                    continue;
+                }
+            }
+
             let analysisResults: any[] = [];
             if (process.env.GEMINI_API_KEY) {
                 console.log(`Analyzing message ${msg.id} with AI (Length: ${body.length})...`);
