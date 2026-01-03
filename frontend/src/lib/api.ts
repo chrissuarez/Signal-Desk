@@ -24,14 +24,29 @@ export async function fetchSettings(key: string) {
 }
 
 export async function updateSettings(key: string, value: any) {
-    const response = await fetch(`${API_BASE_URL}/settings/${key}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(value),
-        credentials: 'include',
-    });
-    if (!response.ok) throw new Error(`Failed to update settings for ${key}`);
-    return response.json();
+    console.log(`[API] updateSettings: Calling key=${key}`, value);
+    try {
+        const response = await fetch(`${API_BASE_URL}/settings/${key}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(value),
+            credentials: 'include',
+        });
+
+        console.log(`[API] updateSettings: Response status=${response.status}`);
+
+        if (!response.ok) {
+            const errBody = await response.text();
+            console.error('[API] updateSettings: FAILED', errBody);
+            throw new Error(`Failed to update settings for ${key}: ${response.status} ${errBody}`);
+        }
+
+        return response.json();
+    } catch (e: any) {
+        console.error('[API] updateSettings: Runtime Error', e);
+        alert(`API Error: ${e.message}`);
+        throw e;
+    }
 }
 
 export const triggerIngestion = async (force: boolean = false, limit: number = 50) => {
