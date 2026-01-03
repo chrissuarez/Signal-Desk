@@ -75,6 +75,7 @@ export default function Dashboard() {
   };
 
   const handleSavePrefs = async () => {
+    console.log('handleSavePrefs clicked');
     setIsSaving(true);
     try {
       const updatedPrefs = {
@@ -83,6 +84,7 @@ export default function Dashboard() {
         industryWeights: prefs.industryWeights,
         locationWeights: prefs.locationWeights,
       };
+      console.log('Sending prefs:', updatedPrefs);
       await updateSettings('user_preferences', updatedPrefs);
       setPrefs(updatedPrefs);
       alert('Preferences saved! New ingestions will use these rules.');
@@ -214,7 +216,7 @@ export default function Dashboard() {
                         className="w-32 accent-blue-500"
                       />
                       <span className={`text-xs font-bold w-12 text-center ${(prefs.industryWeights[ind!] || 0) <= -100 ? 'text-red-500' :
-                          (prefs.industryWeights[ind!] || 0) > 0 ? 'text-green-500' : 'text-gray-500'
+                        (prefs.industryWeights[ind!] || 0) > 0 ? 'text-green-500' : 'text-gray-500'
                         }`}>
                         {(prefs.industryWeights[ind!] || 0) <= -100 ? 'EXCLUDE' : (prefs.industryWeights[ind!] || 0)}
                       </span>
@@ -250,7 +252,7 @@ export default function Dashboard() {
                         className="w-32 accent-blue-500"
                       />
                       <span className={`text-xs font-bold w-8 text-center ${(prefs.locationWeights[loc!] || 0) > 0 ? 'text-green-500' :
-                          (prefs.locationWeights[loc!] || 0) < 0 ? 'text-orange-500' : 'text-gray-500'
+                        (prefs.locationWeights[loc!] || 0) < 0 ? 'text-orange-500' : 'text-gray-500'
                         }`}>
                         {prefs.locationWeights[loc!] || 0}
                       </span>
