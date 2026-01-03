@@ -17,6 +17,7 @@ export const opportunities = pgTable('opportunities', {
 
   title: text('title').notNull(),
   company: text('company'),
+  industry: text('industry'),
   location: text('location'),
   country: text('country'),
   remoteStatus: text('remote_status'), // e.g., Remote, Hybrid, On-site

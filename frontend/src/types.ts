@@ -13,7 +13,9 @@ export interface Opportunity {
     sourceUrl?: string | null;
     title: string;
     company: string | null;
+    industry: string | null;
     location: string | null;
+    remoteStatus: string | null;
     fitScore: number;
     confidence: ConfidenceType;
     reasons: string[] | null;

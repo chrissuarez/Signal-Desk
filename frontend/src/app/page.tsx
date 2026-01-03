@@ -7,11 +7,21 @@ import { Opportunity } from '../types';
 export default function Dashboard() {
   const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
   const [loading, setLoading] = useState(true);
-  const [prefs, setPrefs] = useState<{ keywords: string[], locations: string[] }>({ keywords: [], locations: [] });
+  const [prefs, setPrefs] = useState<{
+    keywords: string[],
+    locations: string[],
+    industryWeights: Record<string, number>,
+    locationWeights: Record<string, number>
+  }>({
+    keywords: [],
+    locations: [],
+    industryWeights: {},
+    locationWeights: {}
+  });
   const [isSaving, setIsSaving] = useState(false);
   const [keywordInput, setKeywordInput] = useState('');
   const [locationInput, setLocationInput] = useState('');
-  const [activeTab, setActiveTab] = useState<'ALL' | 'SAVED' | 'NEW'>('ALL');
+  const [activeTab, setActiveTab] = useState<'ALL' | 'SAVED' | 'NEW' | 'CONFIG'>('ALL');
 
   const loadData = async () => {
     setLoading(true);
@@ -22,11 +32,13 @@ export default function Dashboard() {
       ]);
       setOpportunities(oppsData);
       setPrefs({
-        keywords: prefsData.keywords || ['Software Engineer', 'AI', 'Fullstack', 'TypeScript'],
-        locations: prefsData.locations || ['Remote', 'London'],
+        keywords: prefsData.keywords || [],
+        locations: prefsData.locations || [],
+        industryWeights: prefsData.industryWeights || {},
+        locationWeights: prefsData.locationWeights || {},
       });
-      setKeywordInput((prefsData.keywords || ['Software Engineer', 'AI', 'Fullstack', 'TypeScript']).join(', '));
-      setLocationInput((prefsData.locations || ['Remote', 'London']).join(', '));
+      setKeywordInput((prefsData.keywords || []).join(', '));
+      setLocationInput((prefsData.locations || []).join(', '));
     } catch (error) {
       console.error(error);
     } finally {
@@ -68,6 +80,8 @@ export default function Dashboard() {
       const updatedPrefs = {
         keywords: keywordInput.split(',').map(s => s.trim()).filter(Boolean),
         locations: locationInput.split(',').map(s => s.trim()).filter(Boolean),
+        industryWeights: prefs.industryWeights,
+        locationWeights: prefs.locationWeights,
       };
       await updateSettings('user_preferences', updatedPrefs);
       setPrefs(updatedPrefs);
@@ -158,7 +172,7 @@ export default function Dashboard() {
         </section>
 
         <div className="flex space-x-2 mb-6">
-          {(['ALL', 'NEW', 'SAVED'] as const).map(tab => (
+          {(['ALL', 'NEW', 'SAVED', 'CONFIG'] as const).map(tab => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
@@ -167,12 +181,96 @@ export default function Dashboard() {
                 : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
                 }`}
             >
-              {tab === 'ALL' ? 'Everything' : tab === 'SAVED' ? 'Liked' : 'New'}
+              {tab === 'ALL' ? 'Everything' : tab === 'SAVED' ? 'Liked' : tab === 'NEW' ? 'New' : '🎛️ Controls'}
             </button>
           ))}
         </div>
 
-        {loading ? (
+        {activeTab === 'CONFIG' ? (
+          <section className="space-y-8 animate-in fade-in slide-in-from-bottom-4 transition">
+            <div className="bg-gray-800 border border-gray-700 rounded-xl p-6">
+              <h3 className="text-xl font-bold mb-4 flex items-center">
+                <span className="mr-2">🏢</span> Industry Weights & Exclusions
+              </h3>
+              <p className="text-sm text-gray-400 mb-6">Set weights for discovered industries. Use -100 to exclude entirely.</p>
+              <div className="grid gap-4">
+                {Array.from(new Set(opportunities.map(o => o.industry).filter(Boolean))).map(ind => (
+                  <div key={ind} className="flex items-center justify-between bg-gray-900/50 p-3 rounded border border-gray-800">
+                    <span className="text-sm font-medium">{ind}</span>
+                    <div className="flex items-center space-x-4">
+                      <input
+                        type="range"
+                        min="-100"
+                        max="50"
+                        step="10"
+                        value={prefs.industryWeights[ind!] || 0}
+                        onChange={(e) => {
+                          const val = parseInt(e.target.value);
+                          setPrefs(prev => ({
+                            ...prev,
+                            industryWeights: { ...prev.industryWeights, [ind!]: val }
+                          }));
+                        }}
+                        className="w-32 accent-blue-500"
+                      />
+                      <span className={`text-xs font-bold w-12 text-center ${(prefs.industryWeights[ind!] || 0) <= -100 ? 'text-red-500' :
+                          (prefs.industryWeights[ind!] || 0) > 0 ? 'text-green-500' : 'text-gray-500'
+                        }`}>
+                        {(prefs.industryWeights[ind!] || 0) <= -100 ? 'EXCLUDE' : (prefs.industryWeights[ind!] || 0)}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="bg-gray-800 border border-gray-700 rounded-xl p-6">
+              <h3 className="text-xl font-bold mb-4 flex items-center">
+                <span className="mr-2">📍</span> Precise Location Weights
+              </h3>
+              <p className="text-sm text-gray-400 mb-6">Manage weights for specific cities or regions.</p>
+              <div className="grid gap-4">
+                {Array.from(new Set(opportunities.map(o => o.location).filter(Boolean))).map(loc => (
+                  <div key={loc} className="flex items-center justify-between bg-gray-900/50 p-3 rounded border border-gray-800">
+                    <span className="text-sm font-medium">{loc}</span>
+                    <div className="flex items-center space-x-4">
+                      <input
+                        type="range"
+                        min="-50"
+                        max="50"
+                        step="5"
+                        value={prefs.locationWeights[loc!] || 0}
+                        onChange={(e) => {
+                          const val = parseInt(e.target.value);
+                          setPrefs(prev => ({
+                            ...prev,
+                            locationWeights: { ...prev.locationWeights, [loc!]: val }
+                          }));
+                        }}
+                        className="w-32 accent-blue-500"
+                      />
+                      <span className={`text-xs font-bold w-8 text-center ${(prefs.locationWeights[loc!] || 0) > 0 ? 'text-green-500' :
+                          (prefs.locationWeights[loc!] || 0) < 0 ? 'text-orange-500' : 'text-gray-500'
+                        }`}>
+                        {prefs.locationWeights[loc!] || 0}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex justify-center">
+              <button
+                onClick={handleSavePrefs}
+                disabled={isSaving}
+                className="bg-blue-600 hover:bg-blue-700 text-white px-8 py-3 rounded-full font-bold shadow-lg transition transform hover:scale-105 active:scale-95 disabled:opacity-50"
+              >
+                {isSaving ? 'Applying Rules...' : 'Save Configuration & Apply Rules'}
+              </button>
+            </div>
+          </section>
+        ) : loading ? (
           <div className="text-center py-20">
             <div className="inline-block animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-blue-500 mb-4"></div>
             <div className="text-gray-400">Analyzing your network...</div>
@@ -208,6 +306,11 @@ export default function Dashboard() {
                         <h2 className="text-xl font-bold text-white">{opp.title}</h2>
                       )}
                       <p className="text-blue-300 font-medium">{opp.company}</p>
+                      <div className="flex flex-wrap gap-2 mt-2">
+                        {opp.industry && <span className="text-xs bg-gray-700 text-gray-300 px-2 py-0.5 rounded border border-gray-600">🏢 {opp.industry}</span>}
+                        {opp.location && <span className="text-xs bg-gray-700 text-gray-300 px-2 py-0.5 rounded border border-gray-600">📍 {opp.location}</span>}
+                        {opp.remoteStatus && <span className="text-xs bg-gray-700 text-gray-300 px-2 py-0.5 rounded border border-gray-600">☁️ {opp.remoteStatus}</span>}
+                      </div>
                     </div>
                     <div className="flex flex-col items-end">
                       <span className={`px-3 py-1 rounded-full text-sm font-bold ${opp.fitScore >= 80 ? 'bg-green-600' : opp.fitScore >= 60 ? 'bg-yellow-600' : 'bg-gray-600'
