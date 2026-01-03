@@ -75,7 +75,6 @@ export default function Dashboard() {
   };
 
   const handleSavePrefs = async () => {
-    alert('DEBUG: handleSavePrefs started');
     setIsSaving(true);
     try {
       const updatedPrefs = {
@@ -84,7 +83,6 @@ export default function Dashboard() {
         industryWeights: prefs.industryWeights,
         locationWeights: prefs.locationWeights,
       };
-      console.log('Sending prefs:', updatedPrefs);
       await updateSettings('user_preferences', updatedPrefs);
       setPrefs(updatedPrefs);
       alert('Preferences saved! New ingestions will use these rules.');

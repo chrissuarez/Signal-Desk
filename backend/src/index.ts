@@ -19,25 +19,20 @@ import { runIngestion } from './services/ingestionService.js';
 const app = express();
 const port = process.env.PORT || 4000;
 
-// 1. CORS MUST be at the very top for preflights to succeed
+// Proper CORS configuration for Production
 app.use(cors({
-    origin: true,
+    origin: (origin, callback) => {
+        const allowed = [process.env.FRONTEND_URL, 'http://localhost:3000'].filter(Boolean);
+        if (!origin || allowed.some(a => origin.startsWith(a!)) || origin.endsWith('.pages.dev')) {
+            callback(null, true);
+        } else {
+            callback(new Error('Not allowed by CORS'));
+        }
+    },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'Cookie', 'X-Requested-With'],
-    preflightContinue: false,
-    optionsSuccessStatus: 204
+    allowedHeaders: ['Content-Type', 'Authorization', 'Cookie', 'X-Requested-With']
 }));
-
-// 2. Logging comes after CORS
-app.use((req, res, next) => {
-    console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
-    console.log(`  Origin: ${req.headers.origin}`);
-    if (req.method === 'OPTIONS') {
-        console.log('  Handling Preflight (OPTIONS)');
-    }
-    next();
-});
 
 app.use(helmet());
 app.use(express.json());
