@@ -17,8 +17,8 @@ export const calculateFitScore = (input: ScoringInput): { score: number; reasons
     const reasons: string[] = [];
     const concerns: string[] = [];
 
-    const lowerTitle = input.title.toLowerCase();
-    const lowerDesc = input.description.toLowerCase();
+    const lowerTitle = (input.title || '').toLowerCase();
+    const lowerDesc = (input.description || '').toLowerCase();
     const lowerIndustry = (input.industry || '').toLowerCase();
     const lowerLocation = (input.location || '').toLowerCase();
 
