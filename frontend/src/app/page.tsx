@@ -23,12 +23,15 @@ export default function Dashboard() {
   const [locationInput, setLocationInput] = useState('');
   const [activeTab, setActiveTab] = useState<'ALL' | 'SAVED' | 'NEW' | 'CONFIG'>('ALL');
 
+  const [gmailStatus, setGmailStatus] = useState<{ connected: boolean, error?: string | null }>({ connected: false });
+
   const loadData = async () => {
     setLoading(true);
     try {
-      const [oppsData, prefsData] = await Promise.all([
+      const [oppsData, prefsData, gmailData] = await Promise.all([
         fetchOpportunities(),
-        fetchSettings('user_preferences')
+        fetchSettings('user_preferences'),
+        fetchSettings('gmail_tokens')
       ]);
       setOpportunities(oppsData);
       setPrefs({
@@ -39,12 +42,18 @@ export default function Dashboard() {
       });
       setKeywordInput((prefsData.keywords || []).join(', '));
       setLocationInput((prefsData.locations || []).join(', '));
+
+      setGmailStatus({
+        connected: !!gmailData.access_token && !gmailData.authError,
+        error: gmailData.authError
+      });
     } catch (error) {
       console.error(error);
     } finally {
       setLoading(false);
     }
   };
+
 
   useEffect(() => {
     loadData();
@@ -102,6 +111,17 @@ export default function Dashboard() {
           <p className="text-gray-400">Opportunity Agent Dashboard</p>
         </div>
         <div className="flex items-center space-x-4">
+          {!gmailStatus.connected && (
+            <span className="flex items-center text-xs font-bold text-red-500 bg-red-900/20 border border-red-900/30 px-3 py-1 rounded">
+              <span className="mr-2">⚠️</span>
+              {gmailStatus.error ? 'Connection Revoked' : 'Gmail Not Connected'}
+            </span>
+          )}
+          {gmailStatus.connected && (
+            <span className="flex items-center text-xs font-bold text-green-500 bg-green-900/20 border border-green-900/30 px-3 py-1 rounded">
+              <span className="mr-2">✅</span> Connection Active
+            </span>
+          )}
           <div className="flex items-center bg-gray-800 border border-gray-700 rounded p-1">
             <input
               type="number"
@@ -127,11 +147,12 @@ export default function Dashboard() {
           </button>
           <a
             href={`${API_BASE_URL}/auth/google/login`}
-            className="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded font-medium transition inline-block"
+            className={`${!gmailStatus.connected ? 'bg-red-600 hover:bg-red-700' : 'bg-gray-700 hover:bg-gray-600'} px-4 py-2 rounded font-medium transition inline-block`}
           >
-            Connect Gmail
+            {gmailStatus.error ? 'Reconnect Gmail' : 'Connect Gmail'}
           </a>
         </div>
+
       </header>
 
       <main className="max-w-6xl mx-auto">
