@@ -125,7 +125,11 @@ export const runIngestion = async (options: { force?: boolean, limit?: number } 
         }
 
         console.log('Ingestion run complete.');
-    } catch (error) {
-        console.error('Error during ingestion run:', error);
+    } catch (error: any) {
+        console.error('Error during ingestion run:', error.message || error);
+        if (error.response?.data) {
+            console.error('Error details:', JSON.stringify(error.response.data));
+        }
     }
 };
+

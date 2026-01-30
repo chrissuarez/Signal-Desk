@@ -13,11 +13,35 @@ export const getGmailService = async () => {
         throw new Error('Gmail tokens not found. Please authenticate first.');
     }
 
-    const auth = getOAuthClient();
-    auth.setCredentials(gmailTokensSetting.value as any);
+    const tokens = gmailTokensSetting.value as any;
+
+    // If we previously marked these tokens as having an error, we should probably fail early
+    // but here we'll try one last time and only fail if the actual API call fails.
+
+    const auth = getOAuthClient(tokens);
+
+    // Patch the auth client to handle potential refresh errors that happen during requests
+    const originalGetAccessToken = auth.getAccessToken.bind(auth);
+    auth.getAccessToken = async (...args) => {
+        try {
+            return await originalGetAccessToken(...args);
+        } catch (error: any) {
+            if (error.message === 'invalid_grant' || (error.response?.data?.error === 'invalid_grant')) {
+                console.error('CRITICAL: Gmail refresh token is invalid. Marking for re-authentication.');
+                await db.update(settings)
+                    .set({
+                        value: { ...tokens, authError: 'invalid_grant', lastErrorAt: new Date().toISOString() },
+                        updatedAt: new Date()
+                    })
+                    .where(eq(settings.key, 'gmail_tokens'));
+            }
+            throw error;
+        }
+    };
 
     return google.gmail({ version: 'v1', auth });
 };
+
 
 export const listMessages = async (labelName: string = process.env.GMAIL_LABEL || 'Job Alerts', maxPages: number = 5) => {
     console.log(`Searching for messages with label: ${labelName}`);
