@@ -22,7 +22,7 @@ export const getGmailService = async () => {
 
     // Patch the auth client to handle potential refresh errors that happen during requests
     const originalGetAccessToken = auth.getAccessToken.bind(auth);
-    auth.getAccessToken = async (...args) => {
+    auth.getAccessToken = async (...args: any[]) => {
         try {
             return await originalGetAccessToken(...args);
         } catch (error: any) {

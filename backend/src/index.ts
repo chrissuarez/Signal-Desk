@@ -19,18 +19,22 @@ import { runIngestion } from './services/ingestionService.js';
 const app = express();
 const port = process.env.PORT || 4000;
 
-app.use(helmet());
+// Proper CORS configuration for Production
 app.use(cors({
     origin: (origin, callback) => {
-        const allowed = [process.env.FRONTEND_URL, 'http://localhost:3000', 'https://signal-desk-bdq.pages.dev'].filter(Boolean);
-        if (!origin || allowed.some(a => origin.startsWith(a!))) {
+        const allowed = [process.env.FRONTEND_URL, 'http://localhost:3000'].filter(Boolean);
+        if (!origin || allowed.some(a => origin.startsWith(a!)) || origin.endsWith('.pages.dev')) {
             callback(null, true);
         } else {
             callback(new Error('Not allowed by CORS'));
         }
     },
-    credentials: true
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'Cookie', 'X-Requested-With']
 }));
+
+app.use(helmet());
 app.use(express.json());
 
 app.use('/api/auth', authRoutes);

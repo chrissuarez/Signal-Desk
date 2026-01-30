@@ -22,13 +22,12 @@ export const getOAuthClient = (tokens?: any) => {
     }
 
     // Listen for token refreshes and save them
-    client.on('tokens', async (newTokens) => {
+    client.on('tokens', async (newTokens: any) => {
         console.log('Received new tokens from Google OAuth2 client refresh');
         const { db } = await import('../db/index.js');
         const { settings } = await import('../db/schema.js');
 
         // Merging with existing tokens to preserve the refresh_token if not provided in the event
-        // Note: Google doesn't always return the refresh_token in every token event.
         const currentTokens = tokens || {};
         const updatedTokens = { ...currentTokens, ...newTokens };
 
