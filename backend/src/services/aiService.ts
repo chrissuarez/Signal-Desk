@@ -34,11 +34,30 @@ export const analyzeOpportunityWithAI = async (text: string): Promise<AIAnalysis
     If the email is a digest, job alert, or listing, extract EVERY distinct role or opportunity mentioned.
     If no opportunities are found, return a single entry with type "NOISE".
 
+    STRICT INDUSTRY CLASSIFICATION:
+    You MUST classify each opportunity into EXACTLY ONE of the following high-level industries:
+    - Healthcare & Life Sciences
+    - Technology & Software
+    - Financial Services
+    - Retail & CPG
+    - Industrial & Energy
+    - Government & Public Sector
+    - Professional Services
+    - Real Estate & Hospitality
+    - Marketing, Creative & Digital
+    - Education
+    - Logistics & Transportation
+    - Non-Profit & Social Impact
+    - Agriculture & Food
+    - Legal
+    - Other
+
     For each JOB or BUSINESS opportunity:
-    1. Extract the title, company, industry, and precise location.
-    2. Determine Remote Status (Remote, Hybrid, or On-site) based on text clues.
-    3. Extract the direct link (URL) to the position if available in the text.
-    4. Provide a list of reasons why it qualifies and any concerns.
+    1. Extract the title, company, and precise location.
+    2. Assign the single most relevant "industry" from the list above.
+    3. Determine Remote Status (Remote, Hybrid, or On-site) based on text clues.
+    4. Extract the direct link (URL) to the position if available in the text.
+    5. Provide a list of reasons why it qualifies and any concerns.
     
     Return the result EXACTLY as a JSON array of objects:
     [
@@ -46,7 +65,7 @@ export const analyzeOpportunityWithAI = async (text: string): Promise<AIAnalysis
         "type": "JOB" | "BUSINESS" | "NOISE",
         "title": "Extracted Title",
         "company": "Extracted Company",
-        "industry": "Broad industry category (e.g., Marketing, Manufacturing, Medical, IT, Hospitality)",
+        "industry": "One of the valid industries listed above",
         "location": "City, Country (if known)",
         "remoteStatus": "Remote" | "Hybrid" | "On-site",
         "description": "Brief summarized description (max 100 words).",
