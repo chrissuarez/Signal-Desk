@@ -54,10 +54,11 @@ export const analyzeOpportunityWithAI = async (text: string): Promise<AIAnalysis
 
     For each JOB or BUSINESS opportunity:
     1. Extract the title, company, and precise location.
-    2. Assign the single most relevant "industry" from the list above.
-    3. Determine Remote Status (Remote, Hybrid, or On-site) based on text clues.
-    4. Extract the direct link (URL) to the position if available in the text.
-    5. Provide a list of reasons why it qualifies and any concerns.
+    2. DISTILL THE TITLE: Remove seniority (e.g., Senior, Junior, Lead), locations (e.g., UK, Remote, London), contract types (e.g., Perm, Contract, Fixed Term), and other noise (e.g., salary, clearance) from the title. The title should represent the core role (e.g., "Key Account Director" instead of "Key Account Director (Perm, UK, Remote)").
+    3. Assign the single most relevant "industry" from the list above.
+    4. Determine Remote Status (Remote, Hybrid, or On-site) based on text clues.
+    5. Extract the direct link (URL) to the position if available in the text.
+    6. Provide a list of reasons why it qualifies and any concerns.
     
     Return the result EXACTLY as a JSON array of objects:
     [

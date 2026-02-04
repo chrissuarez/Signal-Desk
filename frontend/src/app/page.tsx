@@ -12,12 +12,14 @@ export default function Dashboard() {
     keywords: string[],
     locations: string[],
     industryWeights: Record<string, number>,
-    locationWeights: Record<string, number>
+    locationWeights: Record<string, number>,
+    jobTitleWeights: Record<string, number>
   }>({
     keywords: [],
     locations: [],
     industryWeights: {},
-    locationWeights: {}
+    locationWeights: {},
+    jobTitleWeights: {}
   });
   const [isSaving, setIsSaving] = useState(false);
   const [keywordInput, setKeywordInput] = useState('');
@@ -40,6 +42,7 @@ export default function Dashboard() {
         locations: prefsData.locations || [],
         industryWeights: prefsData.industryWeights || {},
         locationWeights: prefsData.locationWeights || {},
+        jobTitleWeights: prefsData.jobTitleWeights || {},
       });
       setKeywordInput((prefsData.keywords || []).join(', '));
       setLocationInput((prefsData.locations || []).join(', '));
@@ -92,6 +95,7 @@ export default function Dashboard() {
         locations: locationInput.split(',').map(s => s.trim()).filter(Boolean),
         industryWeights: prefs.industryWeights,
         locationWeights: prefs.locationWeights,
+        jobTitleWeights: prefs.jobTitleWeights,
       };
       await updateSettings('user_preferences', updatedPrefs);
       setPrefs(updatedPrefs);
@@ -277,6 +281,42 @@ export default function Dashboard() {
                         (prefs.locationWeights[loc!] || 0) < 0 ? 'text-orange-500' : 'text-gray-500'
                         }`}>
                         {prefs.locationWeights[loc!] || 0}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="bg-gray-800 border border-gray-700 rounded-xl p-6">
+              <h3 className="text-xl font-bold mb-4 flex items-center">
+                <span className="mr-2">👔</span> Job Title Weights & Roles
+              </h3>
+              <p className="text-sm text-gray-400 mb-6">Set specific weights for distilled job titles. These stack with keyword weights.</p>
+              <div className="grid gap-4">
+                {Array.from(new Set(opportunities.map(o => o.title).filter(Boolean))).map(title => (
+                  <div key={title} className="flex items-center justify-between bg-gray-900/50 p-3 rounded border border-gray-800">
+                    <span className="text-sm font-medium">{title}</span>
+                    <div className="flex items-center space-x-4">
+                      <input
+                        type="range"
+                        min="-50"
+                        max="50"
+                        step="5"
+                        value={prefs.jobTitleWeights[title!] || 0}
+                        onChange={(e) => {
+                          const val = parseInt(e.target.value);
+                          setPrefs(prev => ({
+                            ...prev,
+                            jobTitleWeights: { ...prev.jobTitleWeights, [title!]: val }
+                          }));
+                        }}
+                        className="w-32 accent-blue-500"
+                      />
+                      <span className={`text-xs font-bold w-12 text-center ${(prefs.jobTitleWeights[title!] || 0) > 0 ? 'text-green-500' :
+                        (prefs.jobTitleWeights[title!] || 0) < 0 ? 'text-orange-500' : 'text-gray-500'
+                        }`}>
+                        {prefs.jobTitleWeights[title!] || 0}
                       </span>
                     </div>
                   </div>

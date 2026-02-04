@@ -8,11 +8,12 @@ export interface ScoringInput {
         locations: string[]; // Generic keywords to search for in text
         locationWeights?: Record<string, number>; // Precise location point maps
         industryWeights?: Record<string, number>; // Precise industry point maps
+        jobTitleWeights?: Record<string, number>; // Precise job title point maps
         minSalary?: number;
     };
 }
 
-import { splitIndustries, normalizeIndustry } from './industryRefinement';
+import { splitIndustries, normalizeIndustry } from './industryRefinement.js';
 
 export const calculateFitScore = (input: ScoringInput): { score: number; reasons: string[]; concerns: string[] } => {
     let score = 50; // Starting midpoint
@@ -30,7 +31,7 @@ export const calculateFitScore = (input: ScoringInput): { score: number; reasons
         const uniqueIndustries = Array.from(new Set(industries));
 
         for (const ind of uniqueIndustries) {
-            const weight = input.preferences.industryWeights[ind];
+            const weight = (input.preferences.industryWeights as Record<string, number>)[ind];
             if (weight !== undefined) {
                 score += weight;
                 if (weight > 0) reasons.push(`Preferred industry match: ${ind}`);
@@ -52,7 +53,18 @@ export const calculateFitScore = (input: ScoringInput): { score: number; reasons
         }
     });
 
-    // 3. Precise Location Weights
+    // 3. Job Title Precise Weights (Distilled)
+    if (input.title && input.preferences.jobTitleWeights) {
+        // Direct match on distilled title (AI should have distilled it)
+        const weight = (input.preferences.jobTitleWeights as Record<string, number>)[input.title];
+        if (weight !== undefined) {
+            score += weight;
+            if (weight > 0) reasons.push(`Specific job title match: ${input.title}`);
+            if (weight < 0) concerns.push(`Undesirable job title: ${input.title}`);
+        }
+    }
+
+    // 4. Precise Location Weights
     if (input.location && input.preferences.locationWeights) {
         // Try exact match or partial (city/country)
         for (const [loc, weight] of Object.entries(input.preferences.locationWeights)) {
