@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { fetchOpportunities, triggerIngestion, submitFeedback, fetchSettings, updateSettings, API_BASE_URL } from '@/lib/api';
 import { Opportunity } from '../types';
+import { getRefinedIndustryList } from '@/lib/industryUtils';
 
 export default function Dashboard() {
   const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
@@ -208,6 +209,7 @@ export default function Dashboard() {
           ))}
         </div>
 
+
         {activeTab === 'CONFIG' ? (
           <section className="space-y-8 animate-in fade-in slide-in-from-bottom-4 transition">
             <div className="bg-gray-800 border border-gray-700 rounded-xl p-6">
@@ -216,7 +218,7 @@ export default function Dashboard() {
               </h3>
               <p className="text-sm text-gray-400 mb-6">Set weights for discovered industries. Use -100 to exclude entirely.</p>
               <div className="grid gap-4">
-                {Array.from(new Set(opportunities.map(o => o.industry).filter(Boolean))).map(ind => (
+                {getRefinedIndustryList(opportunities).map(ind => (
                   <div key={ind} className="flex items-center justify-between bg-gray-900/50 p-3 rounded border border-gray-800">
                     <span className="text-sm font-medium">{ind}</span>
                     <div className="flex items-center space-x-4">
@@ -225,20 +227,20 @@ export default function Dashboard() {
                         min="-100"
                         max="50"
                         step="10"
-                        value={prefs.industryWeights[ind!] || 0}
+                        value={prefs.industryWeights[ind] || 0}
                         onChange={(e) => {
                           const val = parseInt(e.target.value);
                           setPrefs(prev => ({
                             ...prev,
-                            industryWeights: { ...prev.industryWeights, [ind!]: val }
+                            industryWeights: { ...prev.industryWeights, [ind]: val }
                           }));
                         }}
                         className="w-32 accent-blue-500"
                       />
-                      <span className={`text-xs font-bold w-12 text-center ${(prefs.industryWeights[ind!] || 0) <= -100 ? 'text-red-500' :
-                        (prefs.industryWeights[ind!] || 0) > 0 ? 'text-green-500' : 'text-gray-500'
+                      <span className={`text-xs font-bold w-12 text-center ${(prefs.industryWeights[ind] || 0) <= -100 ? 'text-red-500' :
+                        (prefs.industryWeights[ind] || 0) > 0 ? 'text-green-500' : 'text-gray-500'
                         }`}>
-                        {(prefs.industryWeights[ind!] || 0) <= -100 ? 'EXCLUDE' : (prefs.industryWeights[ind!] || 0)}
+                        {(prefs.industryWeights[ind] || 0) <= -100 ? 'EXCLUDE' : (prefs.industryWeights[ind] || 0)}
                       </span>
                     </div>
                   </div>

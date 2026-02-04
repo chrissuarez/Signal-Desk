@@ -12,6 +12,8 @@ export interface ScoringInput {
     };
 }
 
+import { splitIndustries, normalizeIndustry } from './industryRefinement';
+
 export const calculateFitScore = (input: ScoringInput): { score: number; reasons: string[]; concerns: string[] } => {
     let score = 50; // Starting midpoint
     const reasons: string[] = [];
@@ -22,15 +24,19 @@ export const calculateFitScore = (input: ScoringInput): { score: number; reasons
     const lowerIndustry = (input.industry || '').toLowerCase();
     const lowerLocation = (input.location || '').toLowerCase();
 
-    // 1. Industry Scoring (High Priority)
+    // 1. Industry Scoring (Refined)
     if (input.industry && input.preferences.industryWeights) {
-        // Direct match
-        const weight = input.preferences.industryWeights[input.industry];
-        if (weight !== undefined) {
-            score += weight;
-            if (weight > 0) reasons.push(`Preferred industry match: ${input.industry}`);
-            if (weight < 0) concerns.push(`Undesirable industry: ${input.industry}`);
-            if (weight <= -100) return { score: 0, reasons: [], concerns: [`Excluded industry: ${input.industry}`] };
+        const industries = splitIndustries(input.industry).map(normalizeIndustry);
+        const uniqueIndustries = Array.from(new Set(industries));
+
+        for (const ind of uniqueIndustries) {
+            const weight = input.preferences.industryWeights[ind];
+            if (weight !== undefined) {
+                score += weight;
+                if (weight > 0) reasons.push(`Preferred industry match: ${ind}`);
+                if (weight < 0) concerns.push(`Undesirable industry: ${ind}`);
+                if (weight <= -100) return { score: 0, reasons: [], concerns: [`Excluded industry: ${ind}`] };
+            }
         }
     }
 
