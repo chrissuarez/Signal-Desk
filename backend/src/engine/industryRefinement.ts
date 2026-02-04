@@ -4,40 +4,121 @@
  */
 
 const INDUSTRY_CONSOLIDATION_MAP: Record<string, string> = {
-    // Pharmaceuticals & Healthcare
-    "pharmaceutical": "Pharmaceuticals",
-    "pharmaceuticals": "Pharmaceuticals",
-    "healthcare": "Healthcare & Medical",
-    "medical": "Healthcare & Medical",
-    "wellness": "Healthcare & Medical",
+    // Healthcare & Life Sciences
+    "pharmaceutical": "Healthcare & Life Sciences",
+    "pharmaceuticals": "Healthcare & Life Sciences",
+    "healthcare": "Healthcare & Life Sciences",
+    "health care": "Healthcare & Life Sciences",
+    "medical": "Healthcare & Life Sciences",
+    "medical devices": "Healthcare & Life Sciences",
+    "wellness": "Healthcare & Life Sciences",
+    "biotech": "Healthcare & Life Sciences",
+    "biotechnology": "Healthcare & Life Sciences",
+    "life sciences": "Healthcare & Life Sciences",
+    "hospital": "Healthcare & Life Sciences",
+    "clinical": "Healthcare & Life Sciences",
 
-    // Technology & IT
-    "it": "Technology & IT",
-    "technology": "Technology & IT",
-    "infrastructure": "Technology & IT",
-    "cloud computing": "Technology & IT",
-    "engineering": "Technology & IT",
-    "data analytics": "Technology & IT",
+    // Technology, IT & Software
+    "it": "Technology & Software",
+    "technology": "Technology & Software",
+    "tech": "Technology & Software",
+    "software": "Technology & Software",
+    "it services": "Technology & Software",
+    "infrastructure": "Technology & Software",
+    "cloud computing": "Technology & Software",
+    "engineering": "Technology & Software", // Often tech engineering
+    "data analytics": "Technology & Software",
+    "artificial intelligence": "Technology & Software",
+    "cybersecurity": "Technology & Software",
+    "saas": "Technology & Software",
+    "internet": "Technology & Software",
+    "telecommunications": "Technology & Software",
 
-    // Marketing & Digital
-    "marketing": "Marketing & Digital",
-    "digital marketing": "Marketing & Digital",
-    "digital": "Marketing & Digital",
-    "communications": "Marketing & Digital",
+    // Marketing, Creative & Digital
+    "marketing": "Marketing, Creative & Digital",
+    "digital marketing": "Marketing, Creative & Digital",
+    "digital": "Marketing, Creative & Digital",
+    "communications": "Marketing, Creative & Digital",
+    "advertising": "Marketing, Creative & Digital",
+    "creative services": "Marketing, Creative & Digital",
+    "media": "Marketing, Creative & Digital",
+    "public relations": "Marketing, Creative & Digital",
+    "design": "Marketing, Creative & Digital",
 
     // Retail & E-commerce
-    "retail": "Retail & E-commerce",
-    "e-commerce": "Retail & E-commerce",
+    "retail": "Retail & CPG",
+    "e-commerce": "Retail & CPG",
+    "fmcg": "Retail & CPG",
+    "consumer goods": "Retail & CPG",
+    "food & beverage": "Retail & CPG",
+    "luxury goods": "Retail & CPG",
+    "apparel": "Retail & CPG",
 
-    // Finance
+    // Financial Services
     "banking": "Financial Services",
     "fintech": "Financial Services",
     "financial services": "Financial Services",
+    "finance": "Financial Services",
+    "insurance": "Financial Services",
+    "investment banking": "Financial Services",
+    "accounting": "Financial Services",
+    "asset management": "Financial Services",
+    "wealth management": "Financial Services",
 
     // Government & Public Sector
-    "government": "Public Sector",
-    "public sector": "Public Sector",
-    "law enforcement": "Public Sector",
+    "government": "Government & Public Sector",
+    "public sector": "Government & Public Sector",
+    "law enforcement": "Government & Public Sector",
+    "defense": "Government & Public Sector",
+    "defence": "Government & Public Sector",
+    "military": "Government & Public Sector",
+    "civic & social organization": "Government & Public Sector",
+    "non-profit": "Government & Public Sector",
+
+    // Industrial, Manufacturing & Energy
+    "manufacturing": "Industrial & Energy",
+    "industrials": "Industrial & Energy",
+    "industrial automation": "Industrial & Energy",
+    "energy": "Industrial & Energy",
+    "utilities": "Industrial & Energy",
+    "oil & gas": "Industrial & Energy",
+    "automotive": "Industrial & Energy",
+    "aerospace": "Industrial & Energy",
+    "construction": "Industrial & Energy",
+    "mining": "Industrial & Energy",
+    "chemicals": "Industrial & Energy",
+    "logistics": "Industrial & Energy",
+    "shipping": "Industrial & Energy",
+    "transportation": "Industrial & Energy",
+    "supply chain": "Industrial & Energy",
+
+    // Professional Services & HR
+    "consulting": "Professional Services",
+    "management consulting": "Professional Services",
+    "professional services": "Professional Services",
+    "human resources": "Professional Services",
+    "hr": "Professional Services",
+    "recruitment": "Professional Services",
+    "staffing": "Professional Services",
+    "legal": "Professional Services",
+    "business services": "Professional Services",
+    "services": "Professional Services",
+
+    // Hospitality & Real Estate
+    "real estate": "Real Estate & Hospitality",
+    "hospitality": "Real Estate & Hospitality",
+    "leisure": "Real Estate & Hospitality",
+    "travel": "Real Estate & Hospitality",
+    "tourism": "Real Estate & Hospitality",
+    "property management": "Real Estate & Hospitality",
+    "events": "Real Estate & Hospitality",
+    "event management": "Real Estate & Hospitality",
+
+    // Education
+    "education": "Education",
+    "higher education": "Education",
+    "e-learning": "Education",
+    "research": "Education",
 };
 
 export function splitIndustries(industryStr: string | null): string[] {
