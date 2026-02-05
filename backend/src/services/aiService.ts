@@ -54,7 +54,14 @@ export const analyzeOpportunityWithAI = async (text: string): Promise<AIAnalysis
 
     For each JOB or BUSINESS opportunity:
     1. Extract the title, company, and precise location.
-    2. DISTILL THE TITLE: Remove seniority (e.g., Senior, Junior, Lead), locations (e.g., UK, Remote, London), contract types (e.g., Perm, Contract, Fixed Term), and other noise (e.g., salary, clearance) from the title. The title should represent the core role (e.g., "Key Account Director" instead of "Key Account Director (Perm, UK, Remote)").
+    2. DISTILL THE TITLE: Remove seniority (e.g., Senior, Junior, Lead), locations (e.g., UK, Remote, London), contract types (e.g., Perm, Contract, Fixed Term), and other noise (e.g., salary, clearance, job IDs like 3221) from the title. 
+       The title should represent the core high-level role.
+       Examples:
+       - "Senior SEO Manager" -> "SEO Manager"
+       - "Local SEO Manager" -> "SEO Manager"
+       - "Head of Performance Marketing" -> "Head of Performance"
+       - "Digital Marketing Manager (3221)" -> "Digital Marketing Manager"
+       - "Key Account Director (Perm, UK, Remote)" -> "Account Director"
     3. Assign the single most relevant "industry" from the list above.
     4. Determine Remote Status (Remote, Hybrid, or On-site) based on text clues.
     5. Extract the direct link (URL) to the position if available in the text.

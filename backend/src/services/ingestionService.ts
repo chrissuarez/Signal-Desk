@@ -4,6 +4,7 @@ import { calculateFitScore } from '../engine/scoring.js';
 import { sendImmediateAlert } from './notificationService.js';
 import { analyzeOpportunityWithAI } from './aiService.js';
 import { scrapeJobDescription } from './scraperService.js';
+import { normalizeJobTitle } from '../engine/jobTitleRefinement.js';
 import { db } from '../db/index.js';
 import { opportunities, settings } from '../db/schema.js';
 import { eq, and } from 'drizzle-orm';
@@ -97,7 +98,7 @@ export const runIngestion = async (options: { force?: boolean, limit?: number } 
                     origin: from,
                     receivedAt: new Date(parseInt(content.internalDate || Date.now().toString())),
                     canonicalUrl,
-                    title: analysis.title,
+                    title: normalizeJobTitle(analysis.title),
                     company: analysis.company,
                     industry: analysis.industry,
                     location: analysis.location,
@@ -111,7 +112,7 @@ export const runIngestion = async (options: { force?: boolean, limit?: number } 
                 }).onConflictDoUpdate({
                     target: opportunities.canonicalUrl,
                     set: {
-                        title: analysis.title,
+                        title: normalizeJobTitle(analysis.title),
                         company: analysis.company,
                         industry: analysis.industry,
                         location: analysis.location,
