@@ -1,0 +1,5 @@
+# Strategic Analysis is LLM-authoritative with deterministic guardrails
+
+The Strategic Score and Strategic Category require judgments keyword-counting cannot make ("what is the real job underneath the title?"). We decided the LLM (Gemini) is the authoritative producer of the full Strategic Analysis — category, sub-scores, narrative, reasons, screening questions. The deterministic engine runs only as (1) a fallback when the AI call fails, and (2) hard **Guardrails** that can override the LLM — an excluded industry or an unambiguous resource-admin signal caps the score or forces a category regardless of what the LLM returned.
+
+We rejected making the deterministic weights table authoritative for the number (it reintroduces the keyword-counting bias the project exists to escape — a role can dodge every penalty keyword and still be a trap) and rejected running two independent scores reconciled at runtime (complex, punts the hard call). The accepted cost: LLM scores are noisy and non-reproducible across runs, so ranking can shift between re-analyses; guardrails bound the damage but do not eliminate it.
