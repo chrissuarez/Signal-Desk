@@ -23,6 +23,7 @@ import { httpDeepScrape, type DeepScrapeAdapter } from './ingestion/deepScrape.j
 import { aiStrategicAnalysis, type StrategicAnalysisAdapter } from './ingestion/strategicAnalysis.js';
 import { dbCostGate, type CostGate } from './ingestion/costGate.js';
 import type {
+    IngestionError,
     IngestionPreferences,
     IngestionRunSummary,
     RecommendedAction,
@@ -97,6 +98,20 @@ const emptySummary = (): IngestionRunSummary => ({
  */
 const projectAction = (routing: RoutingDecision): RecommendedAction =>
     routing.shouldAlert ? 'ALERT' : routing.status === 'NEW' ? 'DIGEST' : 'STORE';
+
+/** Record a collected failure on the summary and log it, without aborting the run. */
+const recordError = (
+    summary: IngestionRunSummary,
+    error: Omit<IngestionError, 'message'>,
+    cause: any,
+): void => {
+    const message = cause?.message || String(cause);
+    summary.errors.push({ ...error, message });
+    console.error(`Ingestion error [${error.stage}${error.messageId ? ` ${error.messageId}` : ''}]:`, message);
+    if (cause?.response?.data) {
+        console.error('Error details:', JSON.stringify(cause.response.data));
+    }
+};
 
 /** Log a concise report derived from the accumulated summary. */
 const reportSummary = (summary: IngestionRunSummary): void => {
@@ -225,13 +240,25 @@ export const runIngestion = async (
 
     const summary = emptySummary();
 
+    // Run-level setup (intake + preferences). A failure here leaves nothing to iterate,
+    // so it is recorded as a run-level error and the (empty) summary is returned.
+    let sources: Awaited<ReturnType<IntakeAdapter['fetchSources']>>;
+    let preferences: IngestionPreferences;
     try {
-        const sources = await deps.intake.fetchSources('Job Alerts', limit);
+        sources = await deps.intake.fetchSources('Job Alerts', limit);
         summary.sourcesSeen = sources.length;
+        preferences = await deps.loadPreferences();
+    } catch (error) {
+        recordError(summary, { stage: 'intake' }, error);
+        reportSummary(summary);
+        return summary;
+    }
 
-        const preferences = await deps.loadPreferences();
-
-        for (const source of sources) {
+    // Per-item error isolation: a poison source no longer aborts the whole run, and a
+    // poison opportunity no longer aborts its digest. Each failure is collected into
+    // summary.errors and processing continues.
+    for (const source of sources) {
+        try {
             // COST GATE (Pass 1): skip extraction if this digest was already processed.
             if (!force && await deps.costGate.digestAlreadyExtracted(source.messageId)) {
                 console.log(`Message ${source.messageId} already analyzed. Skipping AI call.`);
@@ -244,13 +271,18 @@ export const runIngestion = async (
 
             for (const [i, analysis] of analysisResults.entries()) {
                 if (analysis.type === 'NOISE') continue;
-                await processOpportunity(deps, summary, source, analysis, i, preferences, force);
+                try {
+                    await processOpportunity(deps, summary, source, analysis, i, preferences, force);
+                } catch (error) {
+                    recordError(summary, {
+                        stage: 'opportunity',
+                        messageId: source.messageId,
+                        canonicalUrl: `gmail://${source.messageId}#${i}`,
+                    }, error);
+                }
             }
-        }
-    } catch (error: any) {
-        console.error('Error during ingestion run:', error.message || error);
-        if (error.response?.data) {
-            console.error('Error details:', JSON.stringify(error.response.data));
+        } catch (error) {
+            recordError(summary, { stage: 'source', messageId: source.messageId }, error);
         }
     }
 

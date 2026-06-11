@@ -145,4 +145,42 @@ describe('runIngestion (fake-backed pipeline)', () => {
         expect(alerted).toHaveLength(1);
         expect(alerted[0]?.canonicalUrl).toBe('gmail://msgA#0');
     });
+
+    it('isolates a poison source: records the failure and continues the run', async () => {
+        const { adapter: persist, rows } = makePersistDouble();
+        const sources: RawSource[] = [
+            { messageId: 'poison', subject: 's', from: 'f', body: 'Weekly listings below.', internalDate: '1700000000000' },
+            { messageId: 'good', subject: 's', from: 'f', body: 'Weekly listings below.', internalDate: '1700000000000' },
+        ];
+        const deps: IngestionDeps = {
+            ...defaultDeps,
+            persist,
+            intake: { fetchSources: async () => sources },
+            extraction: {
+                extract: async (s) => {
+                    if (s.messageId === 'poison') throw new Error('boom: extraction failed');
+                    return [{
+                        type: 'JOB', title: 'Engineer Position', company: 'Beta',
+                        description: 'A good opportunity', sourceUrl: null, reasons: [], concerns: [],
+                    }];
+                },
+            },
+            costGate: { digestAlreadyExtracted: async () => false, deepAlreadyDone: () => false },
+            sendAlert: async () => {},
+            loadPreferences: async () => ({ keywords: ['engineer'], locations: [] }),
+        };
+
+        const summary = await runIngestion({}, deps);
+
+        // The poison source is recorded, scoped to its messageId at the source stage...
+        expect(summary.errors).toHaveLength(1);
+        expect(summary.errors[0]?.stage).toBe('source');
+        expect(summary.errors[0]?.messageId).toBe('poison');
+        expect(summary.errors[0]?.message).toContain('boom');
+
+        // ...and the run still processes the healthy source that follows it.
+        expect(summary.sourcesSeen).toBe(2);
+        expect(summary.created).toBe(1);
+        expect(rows.get('gmail://good#0')?.title).toBe('Engineer Position');
+    });
 });
