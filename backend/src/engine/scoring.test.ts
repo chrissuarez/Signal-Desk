@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { calculateFitScore } from './scoring';
+import { calculateFitScore } from './scoring.js';
 
 // Smoke test: establishes the test harness (first test in the repo).
 describe('calculateFitScore', () => {
