@@ -1,4 +1,5 @@
 import { calculateFitScore } from '../engine/scoring.js';
+import { legacyPreFilter } from '../engine/strategicPreFilter.js';
 import { sendImmediateAlert } from './notificationService.js';
 import { db } from '../db/index.js';
 import { opportunities, settings } from '../db/schema.js';
@@ -101,7 +102,7 @@ export const runIngestion = async (options: { force?: boolean, limit?: number } 
                 }
 
                 // PASS 2: Deep Scrape for high-potential jobs
-                if (fit.score > 60 && analysis.sourceUrl && !existing) {
+                if (legacyPreFilter({ fitScore: fit.score }) && analysis.sourceUrl && !existing) {
                     console.log(`Pass 2: Triggering Deep Scrape for ${analysis.title} at ${analysis.company}...`);
                     const scraped = await httpDeepScrape.scrape(analysis.sourceUrl);
                     if (scraped && scraped.description.length > 500) {
