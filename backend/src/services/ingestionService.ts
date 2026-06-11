@@ -7,6 +7,7 @@ import { scrapeJobDescription } from './scraperService.js';
 import { db } from '../db/index.js';
 import { opportunities, settings } from '../db/schema.js';
 import { eq, and } from 'drizzle-orm';
+import { dbPersist } from './ingestion/persist.js';
 
 export const runIngestion = async (options: { force?: boolean, limit?: number } = {}) => {
     const { force = false, limit = 50 } = options;
@@ -91,7 +92,7 @@ export const runIngestion = async (options: { force?: boolean, limit?: number } 
                     preferences,
                 });
 
-                const inserted = await db.insert(opportunities).values({
+                const insertedRow = await dbPersist.upsertByCanonicalUrl({
                     type: analysis.type,
                     source: 'EMAIL',
                     origin: from,
@@ -108,25 +109,22 @@ export const runIngestion = async (options: { force?: boolean, limit?: number } 
                     reasons: [...analysis.reasons, ...fit.reasons],
                     concerns: [...analysis.concerns, ...fit.concerns],
                     status: fit.score < 40 ? 'DISMISSED' : 'NEW',
-                }).onConflictDoUpdate({
-                    target: opportunities.canonicalUrl,
-                    set: {
-                        title: analysis.title,
-                        company: analysis.company,
-                        industry: analysis.industry,
-                        location: analysis.location,
-                        remoteStatus: analysis.remoteStatus,
-                        description: analysis.description,
-                        sourceUrl: analysis.sourceUrl || null,
-                        fitScore: fit.score,
-                        reasons: [...analysis.reasons, ...fit.reasons],
-                        concerns: [...analysis.concerns, ...fit.concerns],
-                        updatedAt: new Date(),
-                    }
-                }).returning();
+                }, {
+                    title: analysis.title,
+                    company: analysis.company,
+                    industry: analysis.industry,
+                    location: analysis.location,
+                    remoteStatus: analysis.remoteStatus,
+                    description: analysis.description,
+                    sourceUrl: analysis.sourceUrl || null,
+                    fitScore: fit.score,
+                    reasons: [...analysis.reasons, ...fit.reasons],
+                    concerns: [...analysis.concerns, ...fit.concerns],
+                    updatedAt: new Date(),
+                });
 
-                if (fit.score >= 80 && inserted[0] && inserted[0].status !== 'DISMISSED') {
-                    await sendImmediateAlert(inserted[0]);
+                if (fit.score >= 80 && insertedRow && insertedRow.status !== 'DISMISSED') {
+                    await sendImmediateAlert(insertedRow);
                 }
 
                 // TIER 3: Deep Scrape for high-potential jobs
@@ -137,7 +135,7 @@ export const runIngestion = async (options: { force?: boolean, limit?: number } 
                         console.log(`Tier 3: Re-analyzing with full description (Length: ${scraped.description.length})...`);
                         const deepAnalysis = await analyzeOpportunityWithAI(scraped.description);
                         const finalAnalysis = deepAnalysis?.[0];
-                        if (finalAnalysis && inserted[0]?.id) {
+                        if (finalAnalysis && insertedRow?.id) {
                             const finalFit = calculateFitScore({
                                 title: finalAnalysis.title,
                                 description: scraped.description,
@@ -146,7 +144,7 @@ export const runIngestion = async (options: { force?: boolean, limit?: number } 
                                 preferences,
                             });
 
-                            await db.update(opportunities).set({
+                            await dbPersist.updateById(insertedRow.id, {
                                 description: scraped.description,
                                 requirements: finalAnalysis.reasons.join(', '), // Using reasons as a proxy for raw requirements extract
                                 fitScore: finalFit.score,
@@ -154,7 +152,7 @@ export const runIngestion = async (options: { force?: boolean, limit?: number } 
                                 concerns: [...finalAnalysis.concerns, ...finalFit.concerns],
                                 status: finalFit.score < 40 ? 'DISMISSED' : 'NEW',
                                 updatedAt: new Date(),
-                            }).where(eq(opportunities.id, inserted[0].id));
+                            });
 
                             console.log(`Tier 3 Complete: ${finalAnalysis.title} re-scored to ${finalFit.score}`);
                         }
