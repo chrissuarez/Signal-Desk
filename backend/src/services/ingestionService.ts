@@ -1,4 +1,3 @@
-import { parseEmailBody, classifyOpportunity } from '../engine/parser.js';
 import { calculateFitScore } from '../engine/scoring.js';
 import { sendImmediateAlert } from './notificationService.js';
 import { analyzeOpportunityWithAI } from './aiService.js';
@@ -8,6 +7,7 @@ import { opportunities, settings } from '../db/schema.js';
 import { eq, and } from 'drizzle-orm';
 import { dbPersist } from './ingestion/persist.js';
 import { gmailIntake } from './ingestion/intake.js';
+import { defaultExtraction } from './ingestion/extraction.js';
 
 export const runIngestion = async (options: { force?: boolean, limit?: number } = {}) => {
     const { force = false, limit = 50 } = options;
@@ -31,22 +31,7 @@ export const runIngestion = async (options: { force?: boolean, limit?: number } 
                 }
             }
 
-            let analysisResults: any[] = [];
-            if (process.env.GEMINI_API_KEY) {
-                console.log(`Analyzing message ${messageId} with AI (Length: ${body.length})...`);
-                analysisResults = await analyzeOpportunityWithAI(body);
-            } else {
-                const type = classifyOpportunity(body);
-                const parsed = parseEmailBody(body);
-                analysisResults = [{
-                    type,
-                    title: parsed.title === 'Unknown Position' ? subject : parsed.title,
-                    company: parsed.company,
-                    description: body,
-                    reasons: [],
-                    concerns: ['AI analysis skipped (no API key)']
-                }];
-            }
+            const analysisResults = await defaultExtraction.extract(source);
 
             // Fetch preferences once per email digest
             const prefsRecord = await db.query.settings.findFirst({
@@ -57,8 +42,7 @@ export const runIngestion = async (options: { force?: boolean, limit?: number } 
                 locations: ['Remote', 'London'],
             };
 
-            for (let i = 0; i < analysisResults.length; i++) {
-                const analysis = analysisResults[i];
+            for (const [i, analysis] of analysisResults.entries()) {
                 if (analysis.type === 'NOISE') continue;
 
                 const canonicalUrl = `gmail://${messageId}#${i}`;
@@ -76,8 +60,8 @@ export const runIngestion = async (options: { force?: boolean, limit?: number } 
                 const fit = calculateFitScore({
                     title: analysis.title,
                     description: body,
-                    industry: analysis.industry,
-                    location: analysis.location,
+                    ...(analysis.industry !== undefined ? { industry: analysis.industry } : {}),
+                    ...(analysis.location !== undefined ? { location: analysis.location } : {}),
                     preferences,
                 });
 
