@@ -1,4 +1,3 @@
-import { listMessages, getMessageContent } from './gmailIngestion.js';
 import { parseEmailBody, classifyOpportunity } from '../engine/parser.js';
 import { calculateFitScore } from '../engine/scoring.js';
 import { sendImmediateAlert } from './notificationService.js';
@@ -8,43 +7,33 @@ import { db } from '../db/index.js';
 import { opportunities, settings } from '../db/schema.js';
 import { eq, and } from 'drizzle-orm';
 import { dbPersist } from './ingestion/persist.js';
+import { gmailIntake } from './ingestion/intake.js';
 
 export const runIngestion = async (options: { force?: boolean, limit?: number } = {}) => {
     const { force = false, limit = 50 } = options;
     console.log(`Starting ingestion run (Force: ${force}, Limit: ${limit})...`);
 
     try {
-        const messages = await listMessages('Job Alerts', Math.ceil(limit / 50));
-        const messagesToProcess = messages.slice(0, limit);
-        if (messages.length === 0) {
-            console.log('No messages found to process. Check your GMAIL_LABEL or if emails are arriving.');
-        } else {
-            console.log(`Found ${messages.length} messages. Processing up to ${limit}.`);
-        }
+        const sources = await gmailIntake.fetchSources('Job Alerts', limit);
 
-        for (const msg of messagesToProcess) {
-            if (!msg.id) continue;
+        for (const source of sources) {
+            const { messageId, subject, from, body, internalDate } = source;
 
-            const content = (await getMessageContent(msg.id)) as any;
-            const body = content.fullBody || content.snippet || '';
-            const subject = content.payload?.headers?.find((h: any) => h.name === 'Subject')?.value || 'No Subject';
-            const from = content.payload?.headers?.find((h: any) => h.name === 'From')?.value || 'Unknown';
-
-            // COST OPTIMIZATION: Check if this message was already processed 
+            // COST OPTIMIZATION: Check if this message was already processed
             // by looking for the first indexed job (#0)
             if (!force) {
                 const alreadyProcessed = await db.query.opportunities.findFirst({
-                    where: eq(opportunities.canonicalUrl, `gmail://${msg.id}#0`),
+                    where: eq(opportunities.canonicalUrl, `gmail://${messageId}#0`),
                 });
                 if (alreadyProcessed) {
-                    console.log(`Message ${msg.id} already analyzed. Skipping AI call.`);
+                    console.log(`Message ${messageId} already analyzed. Skipping AI call.`);
                     continue;
                 }
             }
 
             let analysisResults: any[] = [];
             if (process.env.GEMINI_API_KEY) {
-                console.log(`Analyzing message ${msg.id} with AI (Length: ${body.length})...`);
+                console.log(`Analyzing message ${messageId} with AI (Length: ${body.length})...`);
                 analysisResults = await analyzeOpportunityWithAI(body);
             } else {
                 const type = classifyOpportunity(body);
@@ -72,7 +61,7 @@ export const runIngestion = async (options: { force?: boolean, limit?: number } 
                 const analysis = analysisResults[i];
                 if (analysis.type === 'NOISE') continue;
 
-                const canonicalUrl = `gmail://${msg.id}#${i}`;
+                const canonicalUrl = `gmail://${messageId}#${i}`;
 
                 // Deduplication check for this specific job in the digest
                 const existing = await db.query.opportunities.findFirst({
@@ -96,7 +85,7 @@ export const runIngestion = async (options: { force?: boolean, limit?: number } 
                     type: analysis.type,
                     source: 'EMAIL',
                     origin: from,
-                    receivedAt: new Date(parseInt(content.internalDate || Date.now().toString())),
+                    receivedAt: new Date(parseInt(internalDate || Date.now().toString())),
                     canonicalUrl,
                     title: analysis.title,
                     company: analysis.company,
