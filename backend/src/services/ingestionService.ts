@@ -1,4 +1,4 @@
-import { calculateFitScore } from '../engine/scoring.js';
+import { legacyScoreReconcile } from '../engine/scoreReconcile.js';
 import { legacyPreFilter } from '../engine/strategicPreFilter.js';
 import { sendImmediateAlert } from './notificationService.js';
 import { db } from '../db/index.js';
@@ -58,13 +58,15 @@ export const runIngestion = async (options: { force?: boolean, limit?: number } 
                     continue;
                 }
 
-                const fit = calculateFitScore({
+                const scored = legacyScoreReconcile({
                     title: analysis.title,
                     description: body,
                     ...(analysis.industry !== undefined ? { industry: analysis.industry } : {}),
                     ...(analysis.location !== undefined ? { location: analysis.location } : {}),
                     preferences,
                 });
+                // Temporary shim onto the old { score } shape; commit 11 thins this away.
+                const fit = { score: scored.fitScore, reasons: scored.reasons, concerns: scored.concerns };
 
                 const insertedRow = await dbPersist.upsertByCanonicalUrl({
                     type: analysis.type,
@@ -110,13 +112,15 @@ export const runIngestion = async (options: { force?: boolean, limit?: number } 
                         const deepAnalysis = await aiStrategicAnalysis.analyze(scraped.description);
                         const finalAnalysis = deepAnalysis?.[0];
                         if (finalAnalysis && insertedRow?.id) {
-                            const finalFit = calculateFitScore({
+                            const finalScored = legacyScoreReconcile({
                                 title: finalAnalysis.title,
                                 description: scraped.description,
                                 industry: finalAnalysis.industry,
                                 location: finalAnalysis.location,
                                 preferences,
                             });
+                            // Temporary shim onto the old { score } shape; commit 11 thins this away.
+                            const finalFit = { score: finalScored.fitScore, reasons: finalScored.reasons, concerns: finalScored.concerns };
 
                             await dbPersist.updateById(insertedRow.id, {
                                 description: scraped.description,
