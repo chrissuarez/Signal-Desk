@@ -1,13 +1,13 @@
 import { calculateFitScore } from '../engine/scoring.js';
 import { sendImmediateAlert } from './notificationService.js';
-import { analyzeOpportunityWithAI } from './aiService.js';
-import { scrapeJobDescription } from './scraperService.js';
 import { db } from '../db/index.js';
 import { opportunities, settings } from '../db/schema.js';
 import { eq, and } from 'drizzle-orm';
 import { dbPersist } from './ingestion/persist.js';
 import { gmailIntake } from './ingestion/intake.js';
 import { defaultExtraction } from './ingestion/extraction.js';
+import { httpDeepScrape } from './ingestion/deepScrape.js';
+import { aiStrategicAnalysis } from './ingestion/strategicAnalysis.js';
 
 export const runIngestion = async (options: { force?: boolean, limit?: number } = {}) => {
     const { force = false, limit = 50 } = options;
@@ -100,13 +100,13 @@ export const runIngestion = async (options: { force?: boolean, limit?: number } 
                     await sendImmediateAlert(insertedRow);
                 }
 
-                // TIER 3: Deep Scrape for high-potential jobs
+                // PASS 2: Deep Scrape for high-potential jobs
                 if (fit.score > 60 && analysis.sourceUrl && !existing) {
-                    console.log(`Tier 3: Triggering Deep Scrape for ${analysis.title} at ${analysis.company}...`);
-                    const scraped = await scrapeJobDescription(analysis.sourceUrl);
+                    console.log(`Pass 2: Triggering Deep Scrape for ${analysis.title} at ${analysis.company}...`);
+                    const scraped = await httpDeepScrape.scrape(analysis.sourceUrl);
                     if (scraped && scraped.description.length > 500) {
-                        console.log(`Tier 3: Re-analyzing with full description (Length: ${scraped.description.length})...`);
-                        const deepAnalysis = await analyzeOpportunityWithAI(scraped.description);
+                        console.log(`Pass 2: Re-analyzing with full description (Length: ${scraped.description.length})...`);
+                        const deepAnalysis = await aiStrategicAnalysis.analyze(scraped.description);
                         const finalAnalysis = deepAnalysis?.[0];
                         if (finalAnalysis && insertedRow?.id) {
                             const finalFit = calculateFitScore({
@@ -127,7 +127,7 @@ export const runIngestion = async (options: { force?: boolean, limit?: number } 
                                 updatedAt: new Date(),
                             });
 
-                            console.log(`Tier 3 Complete: ${finalAnalysis.title} re-scored to ${finalFit.score}`);
+                            console.log(`Pass 2 Complete: ${finalAnalysis.title} re-scored to ${finalFit.score}`);
                         }
                     }
                 }
