@@ -122,26 +122,30 @@ describe('runIngestion (fake-backed pipeline)', () => {
         expect(summary.deepAnalyzed).toBe(1);       // and it has a sourceUrl, so Pass 2 runs
         expect(summary.created).toBe(3);            // high + mid + low; NOISE is not persisted
         expect(summary.updated).toBe(0);
-        expect(summary.byRecommendedAction).toEqual({ ALERT: 1, DIGEST: 1, STORE: 1, SUPPRESS: 0 });
+        // Live null-category fallback: ≥80 → ALERT, else STORE. No DIGEST/SUPPRESS until #7b.
+        expect(summary.byRecommendedAction).toEqual({ ALERT: 1, DIGEST: 0, STORE: 2, SUPPRESS: 0 });
         expect(summary.errors).toEqual([]);
 
-        // Persisted rows: NOISE never lands; the three jobs do, at their routed status.
+        // Persisted rows: NOISE never lands; the three jobs do, at their routed action.
         expect(rows.size).toBe(3);
         const high = rows.get('gmail://msgA#0');
         const mid = rows.get('gmail://msgA#2');
         const low = rows.get('gmail://msgA#3');
 
-        expect(high?.status).toBe('NEW');
+        expect(high?.recommendedAction).toBe('ALERT');
         expect(high?.fitScore).toBe(85);
         expect(high?.description).toBe(SCRAPED_DESCRIPTION); // Pass 2 replaced the body
 
-        expect(mid?.status).toBe('NEW');
+        expect(mid?.recommendedAction).toBe('STORE');        // 60 < 80 → STORE (was DISMISSED-hidden)
         expect(mid?.fitScore).toBe(60);
 
-        expect(low?.status).toBe('DISMISSED');
+        expect(low?.recommendedAction).toBe('STORE');
         expect(low?.fitScore).toBe(20);
 
-        // Exactly one immediate alert, for the 85-fit job.
+        // Ingestion no longer writes status — it is purely the user's lifecycle field now.
+        expect(high?.status).toBeUndefined();
+
+        // Exactly one immediate alert, for the 85-fit job (recommendedAction === 'ALERT').
         expect(alerted).toHaveLength(1);
         expect(alerted[0]?.canonicalUrl).toBe('gmail://msgA#0');
     });

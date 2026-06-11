@@ -3,34 +3,16 @@
  *
  * Decides the system's routing from scored signals. Pure: signals in, decision out.
  *
- * `legacyRoute` is #11's placeholder: today's status/alert ternaries, verbatim. It is
- * still wired into the orchestrator until #13 commits 5–7 migrate the call sites, after
- * which it is removed.
- *
- * `decideRecommendedAction` is the real ADR-0005 decision (#13 commit 3): a pure map
- * from target-shaped `RecommendedActionSignals` to a `RecommendedAction`. Its interface
- * is final from day one — every arm (including the category arms) is implemented and
- * tested now, but the category/risk arms stay DORMANT until the real category adapter
- * lands (#7b). The only arm that fires live in #13 is the null-category fallback, fed by
- * the legacy fitScore adapter.
+ * `decideRecommendedAction` is the real ADR-0005 decision: a pure map from target-shaped
+ * `RecommendedActionSignals` to a `RecommendedAction`. Its interface is final from day
+ * one — every arm (including the category arms) is implemented and tested now, but the
+ * category/risk arms stay DORMANT until the real category adapter lands (#7b). The only
+ * arm that fires live in #13 is the null-category fallback, fed by the legacy fitScore
+ * adapter. (#11's placeholder `legacyRoute` was retired once the orchestrator migrated.)
  */
 
-import type { RoutingDecision, RecommendedAction } from '../services/ingestion/types.js';
+import type { RecommendedAction } from '../services/ingestion/types.js';
 import type { StrategicCategory, RiskLevel } from './strategicVocabulary.js';
-
-export interface RoutingSignals {
-  fitScore: number;
-}
-
-export interface RecommendedActionRouting {
-  (signals: RoutingSignals): RoutingDecision;
-}
-
-/** Legacy routing: today's status/alert ternaries, verbatim. Removed in #13 commits 5–7. */
-export const legacyRoute: RecommendedActionRouting = (signals) => ({
-  status: signals.fitScore < 40 ? 'DISMISSED' : 'NEW',
-  shouldAlert: signals.fitScore >= 80,
-});
 
 /**
  * The target-shaped routing input. The legacy fitScore adapter (#13 commit 4) supplies a

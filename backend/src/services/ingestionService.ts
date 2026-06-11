@@ -11,7 +11,7 @@
 
 import { legacyScoreReconcile, type ScoreReconcile } from '../engine/scoreReconcile.js';
 import { legacyPreFilter, type StrategicPreFilter } from '../engine/strategicPreFilter.js';
-import { legacyRoute, type RecommendedActionRouting } from '../engine/recommendedActionRouting.js';
+import { decideRecommendedAction } from '../engine/recommendedActionRouting.js';
 import { sendImmediateAlert } from './notificationService.js';
 import { db } from '../db/index.js';
 import { settings } from '../db/schema.js';
@@ -22,12 +22,11 @@ import { defaultExtraction, type ExtractionAdapter } from './ingestion/extractio
 import { httpDeepScrape, type DeepScrapeAdapter } from './ingestion/deepScrape.js';
 import { aiStrategicAnalysis, type StrategicAnalysisAdapter } from './ingestion/strategicAnalysis.js';
 import { dbCostGate, type CostGate } from './ingestion/costGate.js';
+import { fitScoreToSignals } from './ingestion/recommendedActionAdapter.js';
 import type {
     IngestionError,
     IngestionPreferences,
     IngestionRunSummary,
-    RecommendedAction,
-    RoutingDecision,
 } from './ingestion/types.js';
 
 /**
@@ -42,7 +41,6 @@ export interface IngestionDeps {
     deepScrape: DeepScrapeAdapter;
     strategicAnalysis: StrategicAnalysisAdapter;
     scoreReconcile: ScoreReconcile;
-    route: RecommendedActionRouting;
     persist: PersistAdapter;
     costGate: CostGate;
     /** Send an immediate alert for a high-fit opportunity. */
@@ -72,7 +70,6 @@ export const defaultDeps: IngestionDeps = {
     deepScrape: httpDeepScrape,
     strategicAnalysis: aiStrategicAnalysis,
     scoreReconcile: legacyScoreReconcile,
-    route: legacyRoute,
     persist: dbPersist,
     costGate: dbCostGate,
     sendAlert: sendImmediateAlert,
@@ -90,14 +87,6 @@ const emptySummary = (): IngestionRunSummary => ({
     byRecommendedAction: { ALERT: 0, DIGEST: 0, STORE: 0, SUPPRESS: 0 },
     errors: [],
 });
-
-/**
- * Reporting projection of a routing decision onto a Recommended Action, for the run
- * summary only. NOT persisted — ingestion still writes `status` today; ADR-0005 is the
- * slice that makes `recommendedAction` the persisted field (and adds SUPPRESS).
- */
-const projectAction = (routing: RoutingDecision): RecommendedAction =>
-    routing.shouldAlert ? 'ALERT' : routing.status === 'NEW' ? 'DIGEST' : 'STORE';
 
 /** Record a collected failure on the summary and log it, without aborting the run. */
 const recordError = (
@@ -152,7 +141,10 @@ const processOpportunity = async (
         ...(analysis.location !== undefined ? { location: analysis.location } : {}),
         preferences,
     });
-    let routing = deps.route({ fitScore: scored.fitScore });
+    // ADR-0005 (#13): ingestion writes the system's `recommendedAction` and no longer
+    // writes `status` — `status` is now purely the user's lifecycle field. The legacy
+    // fitScore adapter feeds degenerate signals, so only the null-category fallback fires.
+    let recommendedAction = decideRecommendedAction(fitScoreToSignals(scored.fitScore));
 
     const insertedRow = await deps.persist.upsertByCanonicalUrl({
         type: analysis.type,
@@ -170,7 +162,7 @@ const processOpportunity = async (
         fitScore: scored.fitScore,
         reasons: [...analysis.reasons, ...scored.reasons],
         concerns: [...analysis.concerns, ...scored.concerns],
-        status: routing.status,
+        recommendedAction,
     }, {
         title: analysis.title,
         company: analysis.company,
@@ -182,12 +174,13 @@ const processOpportunity = async (
         fitScore: scored.fitScore,
         reasons: [...analysis.reasons, ...scored.reasons],
         concerns: [...analysis.concerns, ...scored.concerns],
+        recommendedAction,
         updatedAt: new Date(),
     });
 
     if (existing) summary.updated++; else summary.created++;
 
-    if (routing.shouldAlert && insertedRow && insertedRow.status !== 'DISMISSED') {
+    if (recommendedAction === 'ALERT' && insertedRow) {
         await deps.sendAlert(insertedRow);
     }
 
@@ -209,7 +202,7 @@ const processOpportunity = async (
                         location: finalAnalysis.location,
                         preferences,
                     });
-                    routing = deps.route({ fitScore: finalScored.fitScore });
+                    recommendedAction = decideRecommendedAction(fitScoreToSignals(finalScored.fitScore));
 
                     await deps.persist.updateById(insertedRow.id, {
                         description: scraped.description,
@@ -217,7 +210,7 @@ const processOpportunity = async (
                         fitScore: finalScored.fitScore,
                         reasons: [...finalAnalysis.reasons, ...finalScored.reasons],
                         concerns: [...finalAnalysis.concerns, ...finalScored.concerns],
-                        status: routing.status,
+                        recommendedAction,
                         updatedAt: new Date(),
                     });
                     summary.deepAnalyzed++;
@@ -227,8 +220,8 @@ const processOpportunity = async (
         }
     }
 
-    summary.byRecommendedAction[projectAction(routing)]++;
-    console.log(`Ingested ${analysis.title} at ${analysis.company} (Score: ${scored.fitScore}, Industry: ${analysis.industry}) from ${canonicalUrl}`);
+    summary.byRecommendedAction[recommendedAction]++;
+    console.log(`Ingested ${analysis.title} at ${analysis.company} (Score: ${scored.fitScore}, Action: ${recommendedAction}, Industry: ${analysis.industry}) from ${canonicalUrl}`);
 };
 
 export const runIngestion = async (
