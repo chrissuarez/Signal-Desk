@@ -16,6 +16,8 @@ export type OpportunityInsert = typeof opportunities.$inferInsert;
 export type OpportunityRow = typeof opportunities.$inferSelect;
 
 export interface PersistAdapter {
+  /** Look up an existing opportunity by canonicalUrl (the orchestrator's dedup read). */
+  findByCanonicalUrl(canonicalUrl: string): Promise<OpportunityRow | undefined>;
   /** Upsert an opportunity keyed on canonicalUrl, returning the resulting row. */
   upsertByCanonicalUrl(
     values: OpportunityInsert,
@@ -27,6 +29,12 @@ export interface PersistAdapter {
 
 /** Drizzle/Postgres-backed Persist adapter (today's behaviour). */
 export const dbPersist: PersistAdapter = {
+  async findByCanonicalUrl(canonicalUrl) {
+    return db.query.opportunities.findFirst({
+      where: eq(opportunities.canonicalUrl, canonicalUrl),
+    });
+  },
+
   async upsertByCanonicalUrl(values, conflictSet) {
     const inserted = await db
       .insert(opportunities)
