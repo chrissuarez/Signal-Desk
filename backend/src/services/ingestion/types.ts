@@ -57,14 +57,14 @@ export type RecommendedAction = 'ALERT' | 'DIGEST' | 'STORE';
 
 /**
  * Output of the Recommended Action routing seam — today's effective routing,
- * expressed as the status written plus the alert/deep-pass side-decisions.
- * Commit 9 moves the existing ternaries here verbatim; ADR-0005 later switches
- * persistence to write `recommendedAction` instead of `status` and adds SUPPRESS.
+ * expressed as the status written plus the alert decision. (Deep-pass gating is the
+ * Strategic Pre-filter's concern, not routing's.) Commit 9 moves the existing
+ * ternaries here verbatim; ADR-0005 later switches persistence to write
+ * `recommendedAction` instead of `status` and adds SUPPRESS.
  */
 export interface RoutingDecision {
   status: 'NEW' | 'DISMISSED';
   shouldAlert: boolean;
-  shouldDeepScrape: boolean;
 }
 
 /** A failure collected during a run (per-source or per-opportunity); see commit 13. */

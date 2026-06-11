@@ -1,5 +1,6 @@
 import { legacyScoreReconcile } from '../engine/scoreReconcile.js';
 import { legacyPreFilter } from '../engine/strategicPreFilter.js';
+import { legacyRoute } from '../engine/recommendedActionRouting.js';
 import { sendImmediateAlert } from './notificationService.js';
 import { db } from '../db/index.js';
 import { opportunities, settings } from '../db/schema.js';
@@ -67,6 +68,7 @@ export const runIngestion = async (options: { force?: boolean, limit?: number } 
                 });
                 // Temporary shim onto the old { score } shape; commit 11 thins this away.
                 const fit = { score: scored.fitScore, reasons: scored.reasons, concerns: scored.concerns };
+                const routing = legacyRoute({ fitScore: fit.score });
 
                 const insertedRow = await dbPersist.upsertByCanonicalUrl({
                     type: analysis.type,
@@ -84,7 +86,7 @@ export const runIngestion = async (options: { force?: boolean, limit?: number } 
                     fitScore: fit.score,
                     reasons: [...analysis.reasons, ...fit.reasons],
                     concerns: [...analysis.concerns, ...fit.concerns],
-                    status: fit.score < 40 ? 'DISMISSED' : 'NEW',
+                    status: routing.status,
                 }, {
                     title: analysis.title,
                     company: analysis.company,
@@ -99,7 +101,7 @@ export const runIngestion = async (options: { force?: boolean, limit?: number } 
                     updatedAt: new Date(),
                 });
 
-                if (fit.score >= 80 && insertedRow && insertedRow.status !== 'DISMISSED') {
+                if (routing.shouldAlert && insertedRow && insertedRow.status !== 'DISMISSED') {
                     await sendImmediateAlert(insertedRow);
                 }
 
@@ -121,6 +123,7 @@ export const runIngestion = async (options: { force?: boolean, limit?: number } 
                             });
                             // Temporary shim onto the old { score } shape; commit 11 thins this away.
                             const finalFit = { score: finalScored.fitScore, reasons: finalScored.reasons, concerns: finalScored.concerns };
+                            const finalRouting = legacyRoute({ fitScore: finalFit.score });
 
                             await dbPersist.updateById(insertedRow.id, {
                                 description: scraped.description,
@@ -128,7 +131,7 @@ export const runIngestion = async (options: { force?: boolean, limit?: number } 
                                 fitScore: finalFit.score,
                                 reasons: [...finalAnalysis.reasons, ...finalFit.reasons],
                                 concerns: [...finalAnalysis.concerns, ...finalFit.concerns],
-                                status: finalFit.score < 40 ? 'DISMISSED' : 'NEW',
+                                status: finalRouting.status,
                                 updatedAt: new Date(),
                             });
 
