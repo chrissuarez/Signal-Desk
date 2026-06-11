@@ -10,6 +10,7 @@ import { gmailIntake } from './ingestion/intake.js';
 import { defaultExtraction } from './ingestion/extraction.js';
 import { httpDeepScrape } from './ingestion/deepScrape.js';
 import { aiStrategicAnalysis } from './ingestion/strategicAnalysis.js';
+import { dbCostGate } from './ingestion/costGate.js';
 
 export const runIngestion = async (options: { force?: boolean, limit?: number } = {}) => {
     const { force = false, limit = 50 } = options;
@@ -21,16 +22,10 @@ export const runIngestion = async (options: { force?: boolean, limit?: number } 
         for (const source of sources) {
             const { messageId, subject, from, body, internalDate } = source;
 
-            // COST OPTIMIZATION: Check if this message was already processed
-            // by looking for the first indexed job (#0)
-            if (!force) {
-                const alreadyProcessed = await db.query.opportunities.findFirst({
-                    where: eq(opportunities.canonicalUrl, `gmail://${messageId}#0`),
-                });
-                if (alreadyProcessed) {
-                    console.log(`Message ${messageId} already analyzed. Skipping AI call.`);
-                    continue;
-                }
+            // COST GATE (Pass 1): skip extraction if this digest was already processed.
+            if (!force && await dbCostGate.digestAlreadyExtracted(messageId)) {
+                console.log(`Message ${messageId} already analyzed. Skipping AI call.`);
+                continue;
             }
 
             const analysisResults = await defaultExtraction.extract(source);
@@ -106,7 +101,7 @@ export const runIngestion = async (options: { force?: boolean, limit?: number } 
                 }
 
                 // PASS 2: Deep Scrape for high-potential jobs
-                if (legacyPreFilter({ fitScore: fit.score }) && analysis.sourceUrl && !existing) {
+                if (legacyPreFilter({ fitScore: fit.score }) && analysis.sourceUrl && !dbCostGate.deepAlreadyDone(existing)) {
                     console.log(`Pass 2: Triggering Deep Scrape for ${analysis.title} at ${analysis.company}...`);
                     const scraped = await httpDeepScrape.scrape(analysis.sourceUrl);
                     if (scraped && scraped.description.length > 500) {
