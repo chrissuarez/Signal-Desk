@@ -87,7 +87,7 @@ const emptySummary = (): IngestionRunSummary => ({
     deepAnalyzed: 0,
     created: 0,
     updated: 0,
-    byRecommendedAction: { ALERT: 0, DIGEST: 0, STORE: 0 },
+    byRecommendedAction: { ALERT: 0, DIGEST: 0, STORE: 0, SUPPRESS: 0 },
     errors: [],
 });
 

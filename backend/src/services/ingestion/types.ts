@@ -53,7 +53,7 @@ export interface ScoreResult {
 }
 
 /** The persisted Recommended Action values (schema enum `recommended_action`). */
-export type RecommendedAction = 'ALERT' | 'DIGEST' | 'STORE';
+export type RecommendedAction = 'ALERT' | 'DIGEST' | 'STORE' | 'SUPPRESS';
 
 /**
  * Output of the Recommended Action routing seam — today's effective routing,

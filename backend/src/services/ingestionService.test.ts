@@ -122,7 +122,7 @@ describe('runIngestion (fake-backed pipeline)', () => {
         expect(summary.deepAnalyzed).toBe(1);       // and it has a sourceUrl, so Pass 2 runs
         expect(summary.created).toBe(3);            // high + mid + low; NOISE is not persisted
         expect(summary.updated).toBe(0);
-        expect(summary.byRecommendedAction).toEqual({ ALERT: 1, DIGEST: 1, STORE: 1 });
+        expect(summary.byRecommendedAction).toEqual({ ALERT: 1, DIGEST: 1, STORE: 1, SUPPRESS: 0 });
         expect(summary.errors).toEqual([]);
 
         // Persisted rows: NOISE never lands; the three jobs do, at their routed status.
