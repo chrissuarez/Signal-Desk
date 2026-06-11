@@ -40,6 +40,10 @@ _Avoid_: fit gate, score threshold (the pre-filter is keyword-presence, not a sc
 The two stages of ingestion. **Pass 1** (cheap): extract fields, run the Strategic Pre-filter. **Pass 2** (expensive): deep-scrape the full job description, then run the full Strategic Analysis on it. Only Opportunities that clear the Pre-filter reach Pass 2.
 _Avoid_: tier 3 (the old name for the deep-scrape step).
 
+**Cost Gate**:
+A deterministic idempotency check that short-circuits already-done work to avoid repeat LLM spend on re-ingestion. Applied at two checkpoints: before **Extraction** (per-digest — "has this digest been extracted?") and before **Pass 2** Strategic Analysis (per-Opportunity — skip rows already at **Analysis Depth** DEEP). Its interface is "has the expensive work been done for this identity?"; the current per-digest implementation uses a fragile proxy (presence of opportunity `#0`) pending a real per-digest completion marker. Distinct from the **Strategic Pre-filter**, which gates on strategic worth, not prior-seen; and from the persist upsert, which owns record uniqueness. Overridable by `force`.
+_Avoid_: dedup (the gate is about cost, not record uniqueness).
+
 **Analysis Depth**:
 Whether an Opportunity's Strategic Analysis was judged from the full deep-scraped job description (**DEEP**, via Pass 2) or from a thin snippet (**SHALLOW** — legacy rows backfilled from stored text, *or* a pre-filtered role whose Pass-2 scrape failed). Strategic analysis always runs on best-available text via one code path; Depth records which text it got. A distinct axis from the existing `confidence` field (which is the AI's field-extraction confidence). The UI flags SHALLOW rows as lower-confidence.
 _Avoid_: confidence (that's a separate existing field), quality.
