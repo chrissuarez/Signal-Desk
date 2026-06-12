@@ -15,6 +15,9 @@ export const strategicCategoryEnum = pgEnum('strategic_category', [
   'GENERIC_OPS_UNCLEAR',
   'REJECT',
 ]);
+// Risk level (#3): the LLM-judged severity of the two Strategic Analysis risk flags.
+// A distinct axis from `confidence` (AI field-extraction confidence) per CONTEXT.md.
+export const riskLevelEnum = pgEnum('risk_level', ['LOW', 'MEDIUM', 'HIGH']);
 
 export const opportunities = pgTable('opportunities', {
   id: serial('id').primaryKey(),
@@ -43,6 +46,26 @@ export const opportunities = pgTable('opportunities', {
   concerns: jsonb('concerns').$type<string[]>(), // top 3 concerns
   tags: jsonb('tags').$type<string[]>(),
   strategicCategory: strategicCategoryEnum('strategic_category'), // nullable; null until analysed (#2)
+
+  // Strategic Analysis (#3): the six Component Scores (0–100), two risk flags, narrative
+  // fields and array fields the LLM judges (ADR-0002/0003). All nullable — null until an
+  // Opportunity has been analysed. No aggregation or ranking yet (that's #4); no
+  // category reconciliation yet (that's #5). `practicalFit` is fed by the demoted Fit
+  // Score rather than judged afresh by the LLM (CONTEXT.md: Practical Fit).
+  consultancyAlignment: integer('consultancy_alignment'),
+  deliveryVisibility: integer('delivery_visibility'),
+  commercialProximity: integer('commercial_proximity'),
+  buyerEnvironmentFit: integer('buyer_environment_fit'),
+  seniorityScope: integer('seniority_scope'),
+  practicalFit: integer('practical_fit'), // sourced from fitScore at ingest, not the LLM
+  resourceAdminTrapRisk: riskLevelEnum('resource_admin_trap_risk'),
+  seoComfortZoneRisk: riskLevelEnum('seo_comfort_zone_risk'),
+  realRoleInterpretation: text('real_role_interpretation'),
+  consultancyRelevance: text('consultancy_relevance'),
+  strategicReasons: jsonb('strategic_reasons').$type<string[]>(),
+  strategicConcerns: jsonb('strategic_concerns').$type<string[]>(),
+  recommendedScreeningQuestions: jsonb('recommended_screening_questions').$type<string[]>(),
+
   recommendedAction: recommendedActionEnum('recommended_action').default('STORE'),
   status: opportunityStatusEnum('status').default('NEW'),
 
