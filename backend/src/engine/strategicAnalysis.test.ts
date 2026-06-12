@@ -34,6 +34,12 @@ describe('parseStrategicAnalysis', () => {
     expect(result.commercialProximity).toBeNull();
   });
 
+  it('nulls blank/whitespace-only score strings rather than scoring them 0', () => {
+    const result = parseStrategicAnalysis({ ...fullRaw, consultancyAlignment: '', commercialProximity: '   ' });
+    expect(result.consultancyAlignment).toBeNull();
+    expect(result.commercialProximity).toBeNull();
+  });
+
   it('uppercases known risk levels and nulls unknown ones', () => {
     const result = parseStrategicAnalysis({ ...fullRaw, resourceAdminTrapRisk: 'high', seoComfortZoneRisk: 'severe' });
     expect(result.resourceAdminTrapRisk).toBe('HIGH');

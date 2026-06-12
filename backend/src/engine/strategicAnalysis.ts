@@ -20,7 +20,12 @@ import { RISK_LEVELS } from './strategicVocabulary.js';
 
 /** A Component Score: an integer 0–100, or null when the LLM omitted/garbled it. */
 const scoreField = z.preprocess((v) => {
-  const n = typeof v === 'string' ? Number(v) : v;
+  let n: unknown = v;
+  if (typeof v === 'string') {
+    const t = v.trim();
+    if (!t) return null; // blank / whitespace-only → null, not a real 0 score
+    n = Number(t);
+  }
   return typeof n === 'number' && Number.isFinite(n)
     ? Math.min(100, Math.max(0, Math.round(n)))
     : null;
