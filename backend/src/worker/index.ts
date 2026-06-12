@@ -2,7 +2,7 @@ import cron from 'node-cron';
 import { runIngestion } from '../services/ingestionService.js';
 import { db } from '../db/index.js';
 import { opportunities } from '../db/schema.js';
-import { and, gte, lt, eq } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { sendDailyDigest } from '../services/notificationService.js';
 
 export const initWorker = () => {
@@ -18,13 +18,12 @@ export const initWorker = () => {
     cron.schedule('30 7 * * *', async () => {
         console.log('Generating daily digest...');
 
-        // Fetch opportunities with score between 60 and 79 that are NEW
+        // ADR-0005 (#13): route on the system's recommendedAction, not the legacy
+        // status/fitScore window. Ingestion no longer writes `status` (it defaults to
+        // NEW as a user-only lifecycle field), so selecting by `status = 'NEW'` would
+        // sweep in every STORE/ALERT row. The digest is exactly the DIGEST arm.
         const digestItems = await db.query.opportunities.findMany({
-            where: and(
-                gte(opportunities.fitScore, 60),
-                lt(opportunities.fitScore, 80),
-                eq(opportunities.status, 'NEW')
-            ),
+            where: eq(opportunities.recommendedAction, 'DIGEST'),
         });
 
         if (digestItems.length > 0) {
