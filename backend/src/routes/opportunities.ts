@@ -1,15 +1,23 @@
 import type { Opportunity } from '../types.js';
 import { db } from '../db/index.js';
 import { opportunities, feedback } from '../db/schema.js';
-import { desc, eq } from 'drizzle-orm';
+import { desc, eq, ne, or, isNull, sql } from 'drizzle-orm';
 import { Router } from 'express';
 
 const router = Router();
 
 router.get('/', async (req, res) => {
     try {
+        // ADR-0005 (#13): route on the system's recommendedAction — hide SUPPRESS rows
+        // from the default view (kept, never deleted) and float ALERT rows to the top,
+        // then by score, then recency. (Null/legacy rows are treated as not-suppressed.)
         const items = await db.query.opportunities.findMany({
-            orderBy: [desc(opportunities.fitScore), desc(opportunities.receivedAt)],
+            where: or(isNull(opportunities.recommendedAction), ne(opportunities.recommendedAction, 'SUPPRESS')),
+            orderBy: [
+                desc(sql`${opportunities.recommendedAction} = 'ALERT'`),
+                desc(opportunities.fitScore),
+                desc(opportunities.receivedAt),
+            ],
         });
         console.log(`Fetched ${items.length} opportunities for display.`);
         res.json(items);

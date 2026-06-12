@@ -3,7 +3,7 @@ import { pgTable, serial, text, integer, timestamp, boolean, jsonb, pgEnum } fro
 export const opportunityTypeEnum = pgEnum('opportunity_type', ['JOB', 'BUSINESS', 'NOISE']);
 export const sourceEnum = pgEnum('source', ['EMAIL', 'RSS', 'WEB']);
 export const confidenceEnum = pgEnum('confidence', ['LOW', 'MEDIUM', 'HIGH']);
-export const recommendedActionEnum = pgEnum('recommended_action', ['ALERT', 'DIGEST', 'STORE']);
+export const recommendedActionEnum = pgEnum('recommended_action', ['ALERT', 'DIGEST', 'STORE', 'SUPPRESS']);
 export const opportunityStatusEnum = pgEnum('opportunity_status', ['NEW', 'SENT', 'SAVED', 'DISMISSED', 'APPLIED']);
 
 export const opportunities = pgTable('opportunities', {

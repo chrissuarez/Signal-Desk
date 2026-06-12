@@ -1,176 +1,284 @@
-import { listMessages, getMessageContent } from './gmailIngestion.js';
-import { parseEmailBody, classifyOpportunity } from '../engine/parser.js';
-import { calculateFitScore } from '../engine/scoring.js';
+/**
+ * Ingestion orchestrator (issue #11, plan commit 11).
+ *
+ * Thinned to pure wiring: it intakes sources, then maps the per-opportunity pipeline
+ * — Cost Gate · Extraction · dedup · Score+reconcile · Routing · Persist · Pass 2 —
+ * over each extracted opportunity, accumulating a typed `IngestionRunSummary` (was
+ * `void`). Every seam is injected via `IngestionDeps`, defaulting to the production
+ * adapters; commit 12's pipeline test supplies fakes + an in-memory persist double.
+ * Behaviour at the boundary (DB writes, alerts) is identical to before the carve.
+ */
+
+import { legacyScoreReconcile, type ScoreReconcile } from '../engine/scoreReconcile.js';
+import { legacyPreFilter, type StrategicPreFilter } from '../engine/strategicPreFilter.js';
+import { decideRecommendedAction } from '../engine/recommendedActionRouting.js';
 import { sendImmediateAlert } from './notificationService.js';
-import { analyzeOpportunityWithAI } from './aiService.js';
-import { scrapeJobDescription } from './scraperService.js';
 import { db } from '../db/index.js';
-import { opportunities, settings } from '../db/schema.js';
-import { eq, and } from 'drizzle-orm';
+import { settings } from '../db/schema.js';
+import { eq } from 'drizzle-orm';
+import { dbPersist, type PersistAdapter, type OpportunityRow } from './ingestion/persist.js';
+import { gmailIntake, type IntakeAdapter } from './ingestion/intake.js';
+import { defaultExtraction, type ExtractionAdapter } from './ingestion/extraction.js';
+import { httpDeepScrape, type DeepScrapeAdapter } from './ingestion/deepScrape.js';
+import { aiStrategicAnalysis, type StrategicAnalysisAdapter } from './ingestion/strategicAnalysis.js';
+import { dbCostGate, type CostGate } from './ingestion/costGate.js';
+import { fitScoreToSignals } from './ingestion/recommendedActionAdapter.js';
+import type {
+    IngestionError,
+    IngestionPreferences,
+    IngestionRunSummary,
+} from './ingestion/types.js';
 
-export const runIngestion = async (options: { force?: boolean, limit?: number } = {}) => {
-    const { force = false, limit = 50 } = options;
-    console.log(`Starting ingestion run (Force: ${force}, Limit: ${limit})...`);
+/**
+ * The seams the orchestrator wires together. Bundling them as one injectable
+ * dependency object is what makes the whole pipeline drivable by fakes (commit 12)
+ * without touching real Gmail, Gemini, or Postgres.
+ */
+export interface IngestionDeps {
+    intake: IntakeAdapter;
+    extraction: ExtractionAdapter;
+    preFilter: StrategicPreFilter;
+    deepScrape: DeepScrapeAdapter;
+    strategicAnalysis: StrategicAnalysisAdapter;
+    scoreReconcile: ScoreReconcile;
+    persist: PersistAdapter;
+    costGate: CostGate;
+    /** Send an immediate alert for a high-fit opportunity. */
+    sendAlert: (row: OpportunityRow) => Promise<void>;
+    /** Load the user's scoring preferences (once per run, reused across digests). */
+    loadPreferences: () => Promise<IngestionPreferences>;
+}
 
-    try {
-        const messages = await listMessages('Job Alerts', Math.ceil(limit / 50));
-        const messagesToProcess = messages.slice(0, limit);
-        if (messages.length === 0) {
-            console.log('No messages found to process. Check your GMAIL_LABEL or if emails are arriving.');
-        } else {
-            console.log(`Found ${messages.length} messages. Processing up to ${limit}.`);
-        }
+const DEFAULT_PREFERENCES: IngestionPreferences = {
+    keywords: ['Software Engineer', 'AI', 'Fullstack', 'TypeScript'],
+    locations: ['Remote', 'London'],
+};
 
-        for (const msg of messagesToProcess) {
-            if (!msg.id) continue;
+/** Production preferences loader: the `user_preferences` settings row, with a fallback. */
+const dbLoadPreferences = async (): Promise<IngestionPreferences> => {
+    const prefsRecord = await db.query.settings.findFirst({
+        where: eq(settings.key, 'user_preferences'),
+    });
+    return (prefsRecord?.value as IngestionPreferences) || DEFAULT_PREFERENCES;
+};
 
-            const content = (await getMessageContent(msg.id)) as any;
-            const body = content.fullBody || content.snippet || '';
-            const subject = content.payload?.headers?.find((h: any) => h.name === 'Subject')?.value || 'No Subject';
-            const from = content.payload?.headers?.find((h: any) => h.name === 'From')?.value || 'Unknown';
+/** The production wiring: real adapters behind every seam. */
+export const defaultDeps: IngestionDeps = {
+    intake: gmailIntake,
+    extraction: defaultExtraction,
+    preFilter: legacyPreFilter,
+    deepScrape: httpDeepScrape,
+    strategicAnalysis: aiStrategicAnalysis,
+    scoreReconcile: legacyScoreReconcile,
+    persist: dbPersist,
+    costGate: dbCostGate,
+    sendAlert: sendImmediateAlert,
+    loadPreferences: dbLoadPreferences,
+};
 
-            // COST OPTIMIZATION: Check if this message was already processed 
-            // by looking for the first indexed job (#0)
-            if (!force) {
-                const alreadyProcessed = await db.query.opportunities.findFirst({
-                    where: eq(opportunities.canonicalUrl, `gmail://${msg.id}#0`),
-                });
-                if (alreadyProcessed) {
-                    console.log(`Message ${msg.id} already analyzed. Skipping AI call.`);
-                    continue;
-                }
-            }
+const emptySummary = (): IngestionRunSummary => ({
+    sourcesSeen: 0,
+    costSkipped: 0,
+    extracted: 0,
+    preFilterPassed: 0,
+    deepAnalyzed: 0,
+    created: 0,
+    updated: 0,
+    byRecommendedAction: { ALERT: 0, DIGEST: 0, STORE: 0, SUPPRESS: 0 },
+    errors: [],
+});
 
-            let analysisResults: any[] = [];
-            if (process.env.GEMINI_API_KEY) {
-                console.log(`Analyzing message ${msg.id} with AI (Length: ${body.length})...`);
-                analysisResults = await analyzeOpportunityWithAI(body);
-            } else {
-                const type = classifyOpportunity(body);
-                const parsed = parseEmailBody(body);
-                analysisResults = [{
-                    type,
-                    title: parsed.title === 'Unknown Position' ? subject : parsed.title,
-                    company: parsed.company,
-                    description: body,
-                    reasons: [],
-                    concerns: ['AI analysis skipped (no API key)']
-                }];
-            }
-
-            // Fetch preferences once per email digest
-            const prefsRecord = await db.query.settings.findFirst({
-                where: eq(settings.key, 'user_preferences')
-            });
-            const preferences = (prefsRecord?.value as any) || {
-                keywords: ['Software Engineer', 'AI', 'Fullstack', 'TypeScript'],
-                locations: ['Remote', 'London'],
-            };
-
-            for (let i = 0; i < analysisResults.length; i++) {
-                const analysis = analysisResults[i];
-                if (analysis.type === 'NOISE') continue;
-
-                const canonicalUrl = `gmail://${msg.id}#${i}`;
-
-                // Deduplication check for this specific job in the digest
-                const existing = await db.query.opportunities.findFirst({
-                    where: eq(opportunities.canonicalUrl, canonicalUrl),
-                });
-
-                if (existing && !force) {
-                    console.log(`Opportunity ${canonicalUrl} already processed. Skipping.`);
-                    continue;
-                }
-
-                const fit = calculateFitScore({
-                    title: analysis.title,
-                    description: body,
-                    industry: analysis.industry,
-                    location: analysis.location,
-                    preferences,
-                });
-
-                const inserted = await db.insert(opportunities).values({
-                    type: analysis.type,
-                    source: 'EMAIL',
-                    origin: from,
-                    receivedAt: new Date(parseInt(content.internalDate || Date.now().toString())),
-                    canonicalUrl,
-                    title: analysis.title,
-                    company: analysis.company,
-                    industry: analysis.industry,
-                    location: analysis.location,
-                    remoteStatus: analysis.remoteStatus,
-                    description: analysis.description,
-                    sourceUrl: analysis.sourceUrl || null,
-                    fitScore: fit.score,
-                    reasons: [...analysis.reasons, ...fit.reasons],
-                    concerns: [...analysis.concerns, ...fit.concerns],
-                    status: fit.score < 40 ? 'DISMISSED' : 'NEW',
-                }).onConflictDoUpdate({
-                    target: opportunities.canonicalUrl,
-                    set: {
-                        title: analysis.title,
-                        company: analysis.company,
-                        industry: analysis.industry,
-                        location: analysis.location,
-                        remoteStatus: analysis.remoteStatus,
-                        description: analysis.description,
-                        sourceUrl: analysis.sourceUrl || null,
-                        fitScore: fit.score,
-                        reasons: [...analysis.reasons, ...fit.reasons],
-                        concerns: [...analysis.concerns, ...fit.concerns],
-                        updatedAt: new Date(),
-                    }
-                }).returning();
-
-                if (fit.score >= 80 && inserted[0] && inserted[0].status !== 'DISMISSED') {
-                    await sendImmediateAlert(inserted[0]);
-                }
-
-                // TIER 3: Deep Scrape for high-potential jobs
-                if (fit.score > 60 && analysis.sourceUrl && !existing) {
-                    console.log(`Tier 3: Triggering Deep Scrape for ${analysis.title} at ${analysis.company}...`);
-                    const scraped = await scrapeJobDescription(analysis.sourceUrl);
-                    if (scraped && scraped.description.length > 500) {
-                        console.log(`Tier 3: Re-analyzing with full description (Length: ${scraped.description.length})...`);
-                        const deepAnalysis = await analyzeOpportunityWithAI(scraped.description);
-                        const finalAnalysis = deepAnalysis?.[0];
-                        if (finalAnalysis && inserted[0]?.id) {
-                            const finalFit = calculateFitScore({
-                                title: finalAnalysis.title,
-                                description: scraped.description,
-                                industry: finalAnalysis.industry,
-                                location: finalAnalysis.location,
-                                preferences,
-                            });
-
-                            await db.update(opportunities).set({
-                                description: scraped.description,
-                                requirements: finalAnalysis.reasons.join(', '), // Using reasons as a proxy for raw requirements extract
-                                fitScore: finalFit.score,
-                                reasons: [...finalAnalysis.reasons, ...finalFit.reasons],
-                                concerns: [...finalAnalysis.concerns, ...finalFit.concerns],
-                                status: finalFit.score < 40 ? 'DISMISSED' : 'NEW',
-                                updatedAt: new Date(),
-                            }).where(eq(opportunities.id, inserted[0].id));
-
-                            console.log(`Tier 3 Complete: ${finalAnalysis.title} re-scored to ${finalFit.score}`);
-                        }
-                    }
-                }
-
-                console.log(`Ingested ${analysis.title} at ${analysis.company} (Score: ${fit.score}, Industry: ${analysis.industry}) from ${canonicalUrl}`);
-            }
-        }
-
-        console.log('Ingestion run complete.');
-    } catch (error: any) {
-        console.error('Error during ingestion run:', error.message || error);
-        if (error.response?.data) {
-            console.error('Error details:', JSON.stringify(error.response.data));
-        }
+/** Record a collected failure on the summary and log it, without aborting the run. */
+const recordError = (
+    summary: IngestionRunSummary,
+    error: Omit<IngestionError, 'message'>,
+    cause: any,
+): void => {
+    const message = cause?.message || String(cause);
+    summary.errors.push({ ...error, message });
+    console.error(`Ingestion error [${error.stage}${error.messageId ? ` ${error.messageId}` : ''}]:`, message);
+    if (cause?.response?.data) {
+        console.error('Error details:', JSON.stringify(cause.response.data));
     }
 };
 
+/** Log a concise report derived from the accumulated summary. */
+const reportSummary = (summary: IngestionRunSummary): void => {
+    const { ALERT, DIGEST, STORE } = summary.byRecommendedAction;
+    console.log(
+        `Ingestion run complete. Sources: ${summary.sourcesSeen} ` +
+        `(cost-skipped ${summary.costSkipped}), extracted ${summary.extracted}, ` +
+        `pre-filter passed ${summary.preFilterPassed}, deep-analyzed ${summary.deepAnalyzed}, ` +
+        `persisted ${summary.created} created / ${summary.updated} updated ` +
+        `[ALERT ${ALERT}, DIGEST ${DIGEST}, STORE ${STORE}], errors ${summary.errors.length}.`,
+    );
+};
+
+/** Run the per-opportunity pipeline for one extracted opportunity, mutating `summary`. */
+const processOpportunity = async (
+    deps: IngestionDeps,
+    summary: IngestionRunSummary,
+    source: { messageId: string; from: string; body: string; internalDate?: string },
+    analysis: Awaited<ReturnType<ExtractionAdapter['extract']>>[number],
+    index: number,
+    preferences: IngestionPreferences,
+    force: boolean,
+): Promise<void> => {
+    const { messageId, from, body, internalDate } = source;
+    const canonicalUrl = `gmail://${messageId}#${index}`;
+
+    // Dedup: skip an opportunity already persisted in a prior run (unless forced).
+    const existing = await deps.persist.findByCanonicalUrl(canonicalUrl);
+    if (existing && !force) {
+        console.log(`Opportunity ${canonicalUrl} already processed. Skipping.`);
+        return;
+    }
+
+    const scored = deps.scoreReconcile({
+        title: analysis.title,
+        description: body,
+        ...(analysis.industry !== undefined ? { industry: analysis.industry } : {}),
+        ...(analysis.location !== undefined ? { location: analysis.location } : {}),
+        preferences,
+    });
+    // ADR-0005 (#13): ingestion writes the system's `recommendedAction` and no longer
+    // writes `status` — `status` is now purely the user's lifecycle field. The legacy
+    // fitScore adapter feeds degenerate signals, so only the null-category fallback fires.
+    let recommendedAction = decideRecommendedAction(fitScoreToSignals(scored.fitScore));
+
+    const insertedRow = await deps.persist.upsertByCanonicalUrl({
+        type: analysis.type,
+        source: 'EMAIL',
+        origin: from,
+        receivedAt: new Date(parseInt(internalDate || Date.now().toString())),
+        canonicalUrl,
+        title: analysis.title,
+        company: analysis.company,
+        industry: analysis.industry,
+        location: analysis.location,
+        remoteStatus: analysis.remoteStatus,
+        description: analysis.description,
+        sourceUrl: analysis.sourceUrl || null,
+        fitScore: scored.fitScore,
+        reasons: [...analysis.reasons, ...scored.reasons],
+        concerns: [...analysis.concerns, ...scored.concerns],
+        recommendedAction,
+    }, {
+        title: analysis.title,
+        company: analysis.company,
+        industry: analysis.industry,
+        location: analysis.location,
+        remoteStatus: analysis.remoteStatus,
+        description: analysis.description,
+        sourceUrl: analysis.sourceUrl || null,
+        fitScore: scored.fitScore,
+        reasons: [...analysis.reasons, ...scored.reasons],
+        concerns: [...analysis.concerns, ...scored.concerns],
+        recommendedAction,
+        updatedAt: new Date(),
+    });
+
+    if (existing) summary.updated++; else summary.created++;
+
+    if (recommendedAction === 'ALERT' && insertedRow) {
+        await deps.sendAlert(insertedRow);
+    }
+
+    // PASS 2: Deep Scrape for high-potential jobs.
+    if (deps.preFilter({ fitScore: scored.fitScore })) {
+        summary.preFilterPassed++;
+        if (analysis.sourceUrl && !deps.costGate.deepAlreadyDone(existing)) {
+            console.log(`Pass 2: Triggering Deep Scrape for ${analysis.title} at ${analysis.company}...`);
+            const scraped = await deps.deepScrape.scrape(analysis.sourceUrl);
+            if (scraped && scraped.description.length > 500) {
+                console.log(`Pass 2: Re-analyzing with full description (Length: ${scraped.description.length})...`);
+                const deepAnalysis = await deps.strategicAnalysis.analyze(scraped.description);
+                const finalAnalysis = deepAnalysis?.[0];
+                if (finalAnalysis && insertedRow?.id) {
+                    const finalScored = deps.scoreReconcile({
+                        title: finalAnalysis.title,
+                        description: scraped.description,
+                        industry: finalAnalysis.industry,
+                        location: finalAnalysis.location,
+                        preferences,
+                    });
+                    recommendedAction = decideRecommendedAction(fitScoreToSignals(finalScored.fitScore));
+
+                    await deps.persist.updateById(insertedRow.id, {
+                        description: scraped.description,
+                        requirements: finalAnalysis.reasons.join(', '), // Using reasons as a proxy for raw requirements extract
+                        fitScore: finalScored.fitScore,
+                        reasons: [...finalAnalysis.reasons, ...finalScored.reasons],
+                        concerns: [...finalAnalysis.concerns, ...finalScored.concerns],
+                        recommendedAction,
+                        updatedAt: new Date(),
+                    });
+                    summary.deepAnalyzed++;
+                    console.log(`Pass 2 Complete: ${finalAnalysis.title} re-scored to ${finalScored.fitScore}`);
+                }
+            }
+        }
+    }
+
+    summary.byRecommendedAction[recommendedAction]++;
+    console.log(`Ingested ${analysis.title} at ${analysis.company} (Score: ${scored.fitScore}, Action: ${recommendedAction}, Industry: ${analysis.industry}) from ${canonicalUrl}`);
+};
+
+export const runIngestion = async (
+    options: { force?: boolean, limit?: number } = {},
+    deps: IngestionDeps = defaultDeps,
+): Promise<IngestionRunSummary> => {
+    const { force = false, limit = 50 } = options;
+    console.log(`Starting ingestion run (Force: ${force}, Limit: ${limit})...`);
+
+    const summary = emptySummary();
+
+    // Run-level setup (intake + preferences). A failure here leaves nothing to iterate,
+    // so it is recorded as a run-level error and the (empty) summary is returned.
+    let sources: Awaited<ReturnType<IntakeAdapter['fetchSources']>>;
+    let preferences: IngestionPreferences;
+    try {
+        sources = await deps.intake.fetchSources('Job Alerts', limit);
+        summary.sourcesSeen = sources.length;
+        preferences = await deps.loadPreferences();
+    } catch (error) {
+        recordError(summary, { stage: 'intake' }, error);
+        reportSummary(summary);
+        return summary;
+    }
+
+    // Per-item error isolation: a poison source no longer aborts the whole run, and a
+    // poison opportunity no longer aborts its digest. Each failure is collected into
+    // summary.errors and processing continues.
+    for (const source of sources) {
+        try {
+            // COST GATE (Pass 1): skip extraction if this digest was already processed.
+            if (!force && await deps.costGate.digestAlreadyExtracted(source.messageId)) {
+                console.log(`Message ${source.messageId} already analyzed. Skipping AI call.`);
+                summary.costSkipped++;
+                continue;
+            }
+
+            const analysisResults = await deps.extraction.extract(source);
+            summary.extracted += analysisResults.length;
+
+            for (const [i, analysis] of analysisResults.entries()) {
+                if (analysis.type === 'NOISE') continue;
+                try {
+                    await processOpportunity(deps, summary, source, analysis, i, preferences, force);
+                } catch (error) {
+                    recordError(summary, {
+                        stage: 'opportunity',
+                        messageId: source.messageId,
+                        canonicalUrl: `gmail://${source.messageId}#${i}`,
+                    }, error);
+                }
+            }
+        } catch (error) {
+            recordError(summary, { stage: 'source', messageId: source.messageId }, error);
+        }
+    }
+
+    reportSummary(summary);
+    return summary;
+};
