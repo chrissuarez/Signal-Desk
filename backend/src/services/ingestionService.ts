@@ -146,6 +146,15 @@ const processOpportunity = async (
     // fitScore adapter feeds degenerate signals, so only the null-category fallback fires.
     let recommendedAction = decideRecommendedAction(fitScoreToSignals(scored.fitScore));
 
+    // Strategic Analysis fields (#3): the LLM-judged block persisted raw, plus the
+    // Practical Fit Component Score sourced from the Fit Score (not the LLM). No
+    // aggregation/ranking (#4) or category reconciliation (#5) yet — this slice only
+    // lands the data.
+    const strategicFields = {
+        ...analysis.strategicAnalysis,
+        practicalFit: scored.fitScore,
+    };
+
     const insertedRow = await deps.persist.upsertByCanonicalUrl({
         type: analysis.type,
         source: 'EMAIL',
@@ -163,6 +172,7 @@ const processOpportunity = async (
         reasons: [...analysis.reasons, ...scored.reasons],
         concerns: [...analysis.concerns, ...scored.concerns],
         strategicCategory: analysis.strategicCategory,
+        ...strategicFields,
         recommendedAction,
     }, {
         title: analysis.title,
@@ -176,6 +186,7 @@ const processOpportunity = async (
         reasons: [...analysis.reasons, ...scored.reasons],
         concerns: [...analysis.concerns, ...scored.concerns],
         strategicCategory: analysis.strategicCategory,
+        ...strategicFields,
         recommendedAction,
         updatedAt: new Date(),
     });
@@ -213,6 +224,8 @@ const processOpportunity = async (
                         reasons: [...finalAnalysis.reasons, ...finalScored.reasons],
                         concerns: [...finalAnalysis.concerns, ...finalScored.concerns],
                         strategicCategory: finalAnalysis.strategicCategory,
+                        ...finalAnalysis.strategicAnalysis,
+                        practicalFit: finalScored.fitScore,
                         recommendedAction,
                         updatedAt: new Date(),
                     });

@@ -72,7 +72,15 @@ const EXTRACTED: ExtractedOpportunity[] = [
     {
         type: 'JOB', title: 'Engineer Position', company: 'Beta',
         description: 'A good opportunity', sourceUrl: null, reasons: [], concerns: [], strategicCategory: 'USEFUL_BRIDGE',
-        strategicAnalysis: EMPTY_STRATEGIC_ANALYSIS,
+        // Populated Pass-1 block: mid never runs Pass 2 (no sourceUrl), so this is what persists.
+        strategicAnalysis: {
+            consultancyAlignment: 55, deliveryVisibility: 45, commercialProximity: 40,
+            buyerEnvironmentFit: 35, seniorityScope: 50,
+            resourceAdminTrapRisk: 'MEDIUM', seoComfortZoneRisk: 'LOW',
+            realRoleInterpretation: 'A mid bridge role.', consultancyRelevance: 'Some relevance.',
+            strategicReasons: ['shallow reason'], strategicConcerns: ['shallow concern'],
+            recommendedScreeningQuestions: ['shallow question'],
+        },
     },
     {
         type: 'JOB', title: 'Junior Clerk', company: 'Gamma',
@@ -85,7 +93,15 @@ const FINAL_ANALYSIS: AIAnalysisResult = {
     type: 'JOB', title: 'Senior Engineer TypeScript AI', company: 'Acme',
     industry: '', location: 'Remote', remoteStatus: 'REMOTE', description: SCRAPED_DESCRIPTION,
     reasons: ['deep reason'], concerns: [], strategicCategory: 'STRATEGIC_FIT',
-    strategicAnalysis: EMPTY_STRATEGIC_ANALYSIS,
+    // Populated deep block: Pass 2 overwrites the high row's Pass-1 strategic fields.
+    strategicAnalysis: {
+        consultancyAlignment: 90, deliveryVisibility: 80, commercialProximity: 60,
+        buyerEnvironmentFit: 55, seniorityScope: 75,
+        resourceAdminTrapRisk: 'LOW', seoComfortZoneRisk: 'MEDIUM',
+        realRoleInterpretation: 'Deep: a delivery-ops leadership role.', consultancyRelevance: 'Strong.',
+        strategicReasons: ['deep strategic reason'], strategicConcerns: ['deep strategic concern'],
+        recommendedScreeningQuestions: ['deep screening question'],
+    },
 };
 
 /** Build deps: real pure seams from defaultDeps, fake I/O. Returns the persist double too. */
@@ -149,6 +165,20 @@ describe('runIngestion (fake-backed pipeline)', () => {
         expect(low?.recommendedAction).toBe('STORE');
         expect(low?.fitScore).toBe(20);
         expect(low?.strategicCategory).toBeNull();           // uncategorised → null persisted
+
+        // Strategic Analysis (#3) persists. The high row ran Pass 2, so its deep block
+        // overwrote the Pass-1 fields; practicalFit is the Fit Score, not an LLM judgment.
+        expect(high?.consultancyAlignment).toBe(90);
+        expect(high?.seoComfortZoneRisk).toBe('MEDIUM');
+        expect(high?.strategicReasons).toEqual(['deep strategic reason']);
+        expect(high?.practicalFit).toBe(85);
+        // The mid row never runs Pass 2, so it keeps its populated Pass-1 block.
+        expect(mid?.consultancyAlignment).toBe(55);
+        expect(mid?.resourceAdminTrapRisk).toBe('MEDIUM');
+        expect(mid?.practicalFit).toBe(60);
+        // The low row was never strategically analysed → block stays null; practicalFit is still the Fit Score.
+        expect(low?.consultancyAlignment).toBeNull();
+        expect(low?.practicalFit).toBe(20);
 
         // Ingestion no longer writes status — it is purely the user's lifecycle field now.
         expect(high?.status).toBeUndefined();
