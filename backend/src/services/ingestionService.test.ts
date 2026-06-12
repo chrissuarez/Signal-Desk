@@ -244,6 +244,59 @@ describe('runIngestion (fake-backed pipeline)', () => {
         expect(alerted).toHaveLength(1);
     });
 
+    it('sends the alert when Pass 2 promotes a row from STORE to ALERT (#4)', async () => {
+        // Pass 1 scores sub-threshold (STORE, no alert), but the Fit Score (65) clears the
+        // pre-filter so Pass 2 runs; the deeper block scores ≥80 and promotes the row to
+        // ALERT. The immediate alert must fire on that final decision — not be skipped
+        // because Pass 1 was STORE.
+        const promoteExtracted: ExtractedOpportunity = {
+            type: 'JOB', title: 'Engineer', company: 'Promo',
+            description: 'A role', location: 'Remote', sourceUrl: 'https://example.com/promote',
+            reasons: [], concerns: [], strategicCategory: null,
+            strategicAnalysis: {
+                consultancyAlignment: 60, deliveryVisibility: 55, commercialProximity: 50,
+                buyerEnvironmentFit: 50, seniorityScope: 55,
+                resourceAdminTrapRisk: 'LOW', seoComfortZoneRisk: 'LOW',
+                realRoleInterpretation: 'shallow', consultancyRelevance: 'some',
+                strategicReasons: [], strategicConcerns: [], recommendedScreeningQuestions: [],
+            },
+        };
+        const promoteFinal: AIAnalysisResult = {
+            type: 'JOB', title: 'Engineer', company: 'Promo',
+            industry: '', location: 'Remote', remoteStatus: 'REMOTE', description: SCRAPED_DESCRIPTION,
+            reasons: ['deep'], concerns: [], strategicCategory: null,
+            strategicAnalysis: {
+                consultancyAlignment: 95, deliveryVisibility: 95, commercialProximity: 95,
+                buyerEnvironmentFit: 95, seniorityScope: 95,
+                resourceAdminTrapRisk: 'LOW', seoComfortZoneRisk: 'LOW',
+                realRoleInterpretation: 'deep', consultancyRelevance: 'strong',
+                strategicReasons: [], strategicConcerns: [], recommendedScreeningQuestions: [],
+            },
+        };
+        const alerted: OpportunityRow[] = [];
+        const { adapter: persist, rows } = makePersistDouble();
+        const deps: IngestionDeps = {
+            ...defaultDeps,
+            persist,
+            intake: { fetchSources: async () => [SOURCES[0]!] },
+            extraction: { extract: async () => [promoteExtracted] },
+            deepScrape: { scrape: async (url): Promise<ScrapedContent> => ({ title: 't', description: SCRAPED_DESCRIPTION, url }) },
+            strategicAnalysis: { analyze: async () => [promoteFinal] },
+            costGate: { digestAlreadyExtracted: async () => false, deepAlreadyDone: () => false },
+            sendAlert: async (row) => { alerted.push(row); },
+            loadPreferences: async () => ({ keywords: ['engineer'], locations: ['remote'], locationWeights: {} }),
+        };
+
+        const summary = await runIngestion({}, deps);
+
+        const row = rows.get('gmail://msgA#0');
+        expect(summary.deepAnalyzed).toBe(1);                   // Pass 2 ran
+        expect(row?.recommendedAction).toBe('ALERT');           // promoted by the deep block
+        expect(row?.strategicScore).toBeGreaterThanOrEqual(80);
+        expect(alerted).toHaveLength(1);                        // …and the user was notified
+        expect(alerted[0]?.strategicScore).toBe(row?.strategicScore); // alert carries the Pass-2 state
+    });
+
     it('isolates a poison source: records the failure and continues the run', async () => {
         const { adapter: persist, rows } = makePersistDouble();
         const sources: RawSource[] = [

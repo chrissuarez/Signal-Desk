@@ -199,9 +199,10 @@ const processOpportunity = async (
 
     if (existing) summary.updated++; else summary.created++;
 
-    if (recommendedAction === 'ALERT' && insertedRow) {
-        await deps.sendAlert(insertedRow);
-    }
+    // The immediate alert fires once, on the FINAL recommendedAction (see below). Pass 2
+    // can still promote (STORE→ALERT) or demote (ALERT→STORE) this row, so notifying here
+    // on the Pass-1 decision would miss promotions and fire premature alerts on demotions.
+    let alertRow: OpportunityRow | undefined = insertedRow;
 
     // PASS 2: Deep Scrape for high-potential jobs.
     if (deps.preFilter({ fitScore: scored.fitScore })) {
@@ -228,7 +229,7 @@ const processOpportunity = async (
                     const finalStrategicScore = computeStrategicScore(finalStrategicFields);
                     recommendedAction = decideRecommendedAction(scoreToSignals(finalStrategicScore ?? 0));
 
-                    await deps.persist.updateById(insertedRow.id, {
+                    const deepUpdate = {
                         description: scraped.description,
                         requirements: finalAnalysis.reasons.join(', '), // Using reasons as a proxy for raw requirements extract
                         fitScore: finalScored.fitScore,
@@ -239,12 +240,21 @@ const processOpportunity = async (
                         strategicScore: finalStrategicScore,
                         recommendedAction,
                         updatedAt: new Date(),
-                    });
+                    };
+                    await deps.persist.updateById(insertedRow.id, deepUpdate);
+                    // Alert on the Pass-2 state, not the stale Pass-1 row.
+                    alertRow = { ...insertedRow, ...deepUpdate } as OpportunityRow;
                     summary.deepAnalyzed++;
                     console.log(`Pass 2 Complete: ${finalAnalysis.title} re-scored to ${finalScored.fitScore}`);
                 }
             }
         }
+    }
+
+    // Single alert point: notify on the FINAL decision exactly once — so a Pass-2
+    // promotion (STORE→ALERT) is sent and a Pass-2 demotion (ALERT→STORE) is not.
+    if (recommendedAction === 'ALERT' && alertRow) {
+        await deps.sendAlert(alertRow);
     }
 
     summary.byRecommendedAction[recommendedAction]++;
