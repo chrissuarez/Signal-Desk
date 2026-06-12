@@ -11,6 +11,7 @@
  */
 
 import type { StrategicCategory } from '../../engine/strategicVocabulary.js';
+import type { StrategicAnalysis } from '../../engine/strategicAnalysis.js';
 
 /** User scoring preferences, as persisted under settings key `user_preferences`. */
 export interface IngestionPreferences {
@@ -47,6 +48,8 @@ export interface ExtractedOpportunity {
   concerns: string[];
   /** LLM-proposed Strategic Category (#2); null when uncategorised or no-key fallback. */
   strategicCategory: StrategicCategory | null;
+  /** Validated LLM Strategic Analysis block (#3); EMPTY block on no-key/failure fallback. */
+  strategicAnalysis: StrategicAnalysis;
 }
 
 /** Output of the Score + Category reconcile seam. */
