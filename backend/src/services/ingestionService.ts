@@ -162,6 +162,7 @@ const processOpportunity = async (
         fitScore: scored.fitScore,
         reasons: [...analysis.reasons, ...scored.reasons],
         concerns: [...analysis.concerns, ...scored.concerns],
+        strategicCategory: analysis.strategicCategory,
         recommendedAction,
     }, {
         title: analysis.title,
@@ -174,6 +175,7 @@ const processOpportunity = async (
         fitScore: scored.fitScore,
         reasons: [...analysis.reasons, ...scored.reasons],
         concerns: [...analysis.concerns, ...scored.concerns],
+        strategicCategory: analysis.strategicCategory,
         recommendedAction,
         updatedAt: new Date(),
     });
@@ -210,6 +212,7 @@ const processOpportunity = async (
                         fitScore: finalScored.fitScore,
                         reasons: [...finalAnalysis.reasons, ...finalScored.reasons],
                         concerns: [...finalAnalysis.concerns, ...finalScored.concerns],
+                        strategicCategory: finalAnalysis.strategicCategory,
                         recommendedAction,
                         updatedAt: new Date(),
                     });

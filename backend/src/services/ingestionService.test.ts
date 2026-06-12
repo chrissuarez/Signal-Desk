@@ -135,12 +135,15 @@ describe('runIngestion (fake-backed pipeline)', () => {
         expect(high?.recommendedAction).toBe('ALERT');
         expect(high?.fitScore).toBe(85);
         expect(high?.description).toBe(SCRAPED_DESCRIPTION); // Pass 2 replaced the body
+        expect(high?.strategicCategory).toBe('STRATEGIC_FIT'); // persisted from analysis (#2)
 
         expect(mid?.recommendedAction).toBe('STORE');        // 60 < 80 → STORE (was DISMISSED-hidden)
         expect(mid?.fitScore).toBe(60);
+        expect(mid?.strategicCategory).toBe('USEFUL_BRIDGE');
 
         expect(low?.recommendedAction).toBe('STORE');
         expect(low?.fitScore).toBe(20);
+        expect(low?.strategicCategory).toBeNull();           // uncategorised → null persisted
 
         // Ingestion no longer writes status — it is purely the user's lifecycle field now.
         expect(high?.status).toBeUndefined();
