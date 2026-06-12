@@ -208,45 +208,56 @@ const processOpportunity = async (
     if (deps.preFilter({ fitScore: scored.fitScore })) {
         summary.preFilterPassed++;
         if (analysis.sourceUrl && !deps.costGate.deepAlreadyDone(existing)) {
-            console.log(`Pass 2: Triggering Deep Scrape for ${analysis.title} at ${analysis.company}...`);
-            const scraped = await deps.deepScrape.scrape(analysis.sourceUrl);
-            if (scraped && scraped.description.length > 500) {
-                console.log(`Pass 2: Re-analyzing with full description (Length: ${scraped.description.length})...`);
-                const deepAnalysis = await deps.strategicAnalysis.analyze(scraped.description);
-                const finalAnalysis = deepAnalysis?.[0];
-                if (finalAnalysis && insertedRow?.id) {
-                    const finalScored = deps.scoreReconcile({
-                        title: finalAnalysis.title,
-                        description: scraped.description,
-                        industry: finalAnalysis.industry,
-                        location: finalAnalysis.location,
-                        preferences,
-                    });
-                    const finalStrategicFields = {
-                        ...finalAnalysis.strategicAnalysis,
-                        practicalFit: finalScored.fitScore,
-                    };
-                    const finalStrategicScore = computeStrategicScore(finalStrategicFields);
-                    recommendedAction = decideRecommendedAction(scoreToSignals(finalStrategicScore ?? 0));
+            // Deep scrape + re-analysis is optional enrichment. A transient scrape/analysis
+            // failure must not lose the Pass-1 decision or its alert — the row is already
+            // persisted on the Pass-1 recommendedAction — so it is isolated here: on error we
+            // record it and fall through to the single alert point below, which still fires on
+            // the Pass-1 decision (alertRow stays the Pass-1 row). This restores the pre-
+            // collapse behaviour where a Pass-1 ALERT survived a Pass-2 failure.
+            try {
+                console.log(`Pass 2: Triggering Deep Scrape for ${analysis.title} at ${analysis.company}...`);
+                const scraped = await deps.deepScrape.scrape(analysis.sourceUrl);
+                if (scraped && scraped.description.length > 500) {
+                    console.log(`Pass 2: Re-analyzing with full description (Length: ${scraped.description.length})...`);
+                    const deepAnalysis = await deps.strategicAnalysis.analyze(scraped.description);
+                    const finalAnalysis = deepAnalysis?.[0];
+                    if (finalAnalysis && insertedRow?.id) {
+                        const finalScored = deps.scoreReconcile({
+                            title: finalAnalysis.title,
+                            description: scraped.description,
+                            industry: finalAnalysis.industry,
+                            location: finalAnalysis.location,
+                            preferences,
+                        });
+                        const finalStrategicFields = {
+                            ...finalAnalysis.strategicAnalysis,
+                            practicalFit: finalScored.fitScore,
+                        };
+                        const finalStrategicScore = computeStrategicScore(finalStrategicFields);
+                        recommendedAction = decideRecommendedAction(scoreToSignals(finalStrategicScore ?? 0));
 
-                    const deepUpdate = {
-                        description: scraped.description,
-                        requirements: finalAnalysis.reasons.join(', '), // Using reasons as a proxy for raw requirements extract
-                        fitScore: finalScored.fitScore,
-                        reasons: [...finalAnalysis.reasons, ...finalScored.reasons],
-                        concerns: [...finalAnalysis.concerns, ...finalScored.concerns],
-                        strategicCategory: finalAnalysis.strategicCategory,
-                        ...finalStrategicFields,
-                        strategicScore: finalStrategicScore,
-                        recommendedAction,
-                        updatedAt: new Date(),
-                    };
-                    await deps.persist.updateById(insertedRow.id, deepUpdate);
-                    // Alert on the Pass-2 state, not the stale Pass-1 row.
-                    alertRow = { ...insertedRow, ...deepUpdate } as OpportunityRow;
-                    summary.deepAnalyzed++;
-                    console.log(`Pass 2 Complete: ${finalAnalysis.title} re-scored to ${finalScored.fitScore}`);
+                        const deepUpdate = {
+                            description: scraped.description,
+                            requirements: finalAnalysis.reasons.join(', '), // Using reasons as a proxy for raw requirements extract
+                            fitScore: finalScored.fitScore,
+                            reasons: [...finalAnalysis.reasons, ...finalScored.reasons],
+                            concerns: [...finalAnalysis.concerns, ...finalScored.concerns],
+                            strategicCategory: finalAnalysis.strategicCategory,
+                            ...finalStrategicFields,
+                            strategicScore: finalStrategicScore,
+                            recommendedAction,
+                            updatedAt: new Date(),
+                        };
+                        await deps.persist.updateById(insertedRow.id, deepUpdate);
+                        // Alert on the Pass-2 state, not the stale Pass-1 row.
+                        alertRow = { ...insertedRow, ...deepUpdate } as OpportunityRow;
+                        summary.deepAnalyzed++;
+                        console.log(`Pass 2 Complete: ${finalAnalysis.title} re-scored to ${finalScored.fitScore}`);
+                    }
                 }
+            } catch (error) {
+                // Keep the Pass-1 decision + alert; surface the deep-pass failure on the summary.
+                recordError(summary, { stage: 'deepScrape', messageId, canonicalUrl }, error);
             }
         }
     }

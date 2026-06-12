@@ -297,6 +297,53 @@ describe('runIngestion (fake-backed pipeline)', () => {
         expect(alerted[0]?.strategicScore).toBe(row?.strategicScore); // alert carries the Pass-2 state
     });
 
+    it('still alerts on the Pass-1 decision when the Pass-2 deep scrape fails (#4)', async () => {
+        // A row that already routes to ALERT on Pass 1 (strong Pass-1 block) and clears the
+        // pre-filter (Fit 65 > 60) so Pass 2 runs — but the deep scrape throws. The optional
+        // enrichment failure must NOT swallow the Pass-1 alert: the row is already persisted
+        // as ALERT, so the notification must still fire and the failure be recorded.
+        const alertExtracted: ExtractedOpportunity = {
+            type: 'JOB', title: 'Engineer', company: 'Flaky',
+            description: 'A role', location: 'Remote', sourceUrl: 'https://example.com/flaky',
+            reasons: [], concerns: [], strategicCategory: null,
+            strategicAnalysis: {
+                consultancyAlignment: 95, deliveryVisibility: 95, commercialProximity: 95,
+                buyerEnvironmentFit: 95, seniorityScope: 95,
+                resourceAdminTrapRisk: 'LOW', seoComfortZoneRisk: 'LOW',
+                realRoleInterpretation: 'strong', consultancyRelevance: 'direct',
+                strategicReasons: [], strategicConcerns: [], recommendedScreeningQuestions: [],
+            },
+        };
+        const alerted: OpportunityRow[] = [];
+        const { adapter: persist, rows } = makePersistDouble();
+        const deps: IngestionDeps = {
+            ...defaultDeps,
+            persist,
+            intake: { fetchSources: async () => [SOURCES[0]!] },
+            extraction: { extract: async () => [alertExtracted] },
+            deepScrape: { scrape: async () => { throw new Error('boom: scrape timed out'); } },
+            costGate: { digestAlreadyExtracted: async () => false, deepAlreadyDone: () => false },
+            sendAlert: async (row) => { alerted.push(row); },
+            loadPreferences: async () => ({ keywords: ['engineer'], locations: ['remote'], locationWeights: {} }),
+        };
+
+        const summary = await runIngestion({}, deps);
+
+        const row = rows.get('gmail://msgA#0');
+        expect(row?.recommendedAction).toBe('ALERT');                // Pass-1 decision persisted
+        expect(row?.strategicScore).toBeGreaterThanOrEqual(80);
+        expect(summary.deepAnalyzed).toBe(0);                        // Pass 2 never completed
+        // The deep-pass failure is recorded, scoped to the opportunity's canonical URL...
+        expect(summary.errors).toHaveLength(1);
+        expect(summary.errors[0]?.stage).toBe('deepScrape');
+        expect(summary.errors[0]?.canonicalUrl).toBe('gmail://msgA#0');
+        expect(summary.errors[0]?.message).toContain('boom');
+        // ...and the Pass-1 ALERT still notifies and tallies — not swallowed by the failure.
+        expect(alerted).toHaveLength(1);
+        expect(alerted[0]?.strategicScore).toBe(row?.strategicScore); // carries the Pass-1 state
+        expect(summary.byRecommendedAction.ALERT).toBe(1);
+    });
+
     it('isolates a poison source: records the failure and continues the run', async () => {
         const { adapter: persist, rows } = makePersistDouble();
         const sources: RawSource[] = [
