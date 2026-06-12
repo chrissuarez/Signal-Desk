@@ -12,6 +12,7 @@
 import { legacyScoreReconcile, type ScoreReconcile } from '../engine/scoreReconcile.js';
 import { legacyPreFilter, type StrategicPreFilter } from '../engine/strategicPreFilter.js';
 import { decideRecommendedAction } from '../engine/recommendedActionRouting.js';
+import { computeStrategicScore } from '../engine/strategicScoring.js';
 import { sendImmediateAlert } from './notificationService.js';
 import { db } from '../db/index.js';
 import { settings } from '../db/schema.js';
@@ -147,13 +148,14 @@ const processOpportunity = async (
     let recommendedAction = decideRecommendedAction(fitScoreToSignals(scored.fitScore));
 
     // Strategic Analysis fields (#3): the LLM-judged block persisted raw, plus the
-    // Practical Fit Component Score sourced from the Fit Score (not the LLM). No
-    // aggregation/ranking (#4) or category reconciliation (#5) yet — this slice only
-    // lands the data.
+    // Practical Fit Component Score sourced from the Fit Score (not the LLM). The
+    // headline Strategic Score (#4, ADR-0001) is computed from that block here and
+    // persisted alongside it — the ranking authority that replaces the Fit Score.
     const strategicFields = {
         ...analysis.strategicAnalysis,
         practicalFit: scored.fitScore,
     };
+    const strategicScore = computeStrategicScore(strategicFields);
 
     const insertedRow = await deps.persist.upsertByCanonicalUrl({
         type: analysis.type,
@@ -173,6 +175,7 @@ const processOpportunity = async (
         concerns: [...analysis.concerns, ...scored.concerns],
         strategicCategory: analysis.strategicCategory,
         ...strategicFields,
+        strategicScore,
         recommendedAction,
     }, {
         title: analysis.title,
@@ -187,6 +190,7 @@ const processOpportunity = async (
         concerns: [...analysis.concerns, ...scored.concerns],
         strategicCategory: analysis.strategicCategory,
         ...strategicFields,
+        strategicScore,
         recommendedAction,
         updatedAt: new Date(),
     });
@@ -217,6 +221,11 @@ const processOpportunity = async (
                     });
                     recommendedAction = decideRecommendedAction(fitScoreToSignals(finalScored.fitScore));
 
+                    const finalStrategicFields = {
+                        ...finalAnalysis.strategicAnalysis,
+                        practicalFit: finalScored.fitScore,
+                    };
+
                     await deps.persist.updateById(insertedRow.id, {
                         description: scraped.description,
                         requirements: finalAnalysis.reasons.join(', '), // Using reasons as a proxy for raw requirements extract
@@ -224,8 +233,8 @@ const processOpportunity = async (
                         reasons: [...finalAnalysis.reasons, ...finalScored.reasons],
                         concerns: [...finalAnalysis.concerns, ...finalScored.concerns],
                         strategicCategory: finalAnalysis.strategicCategory,
-                        ...finalAnalysis.strategicAnalysis,
-                        practicalFit: finalScored.fitScore,
+                        ...finalStrategicFields,
+                        strategicScore: computeStrategicScore(finalStrategicFields),
                         recommendedAction,
                         updatedAt: new Date(),
                     });
