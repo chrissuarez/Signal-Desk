@@ -34,12 +34,15 @@ FROM (
   ) t
 ) b
 WHERE o.id = b.id AND b.score IS NOT NULL;--> statement-breakpoint
--- Re-route the backfilled rows off the Strategic Score (ADR-0001), matching how ingestion
--- now routes through the degenerate null-category adapter: the live arm is the
--- null-category fallback (score >= 80 -> ALERT, else STORE). This flips a high-Fit/
--- low-Strategic row down to STORE and promotes a strong-Strategic row to ALERT, so the
--- dashboard's floated-ALERT + strategic_score ordering reflects Strategic Score for
--- existing data too. Only the two live actions are rewritten; un-scored rows are left as-is.
+-- Re-route every existing row off the Strategic Score (ADR-0001), matching how ingestion
+-- now routes through the degenerate null-category adapter exactly: the live arm is the
+-- null-category fallback over `strategicScore ?? 0` (score >= 80 -> ALERT, else STORE). A
+-- null score is therefore treated as 0 — so an un-scored legacy row (one predating #3's
+-- component columns, all null) that the old Fit routing marked ALERT is demoted to STORE
+-- rather than left floating above scored rows. This flips a high-Fit/low-Strategic row
+-- down to STORE and promotes a strong-Strategic row to ALERT, so the dashboard's
+-- floated-ALERT + strategic_score ordering reflects Strategic Score for existing data too.
+-- Only the two live actions are rewritten; any DIGEST/SUPPRESS row is left untouched.
 UPDATE "opportunities"
-SET "recommended_action" = CASE WHEN "strategic_score" >= 80 THEN 'ALERT' ELSE 'STORE' END
-WHERE "strategic_score" IS NOT NULL AND "recommended_action" IN ('ALERT', 'STORE');
+SET "recommended_action" = CASE WHEN COALESCE("strategic_score", 0) >= 80 THEN 'ALERT' ELSE 'STORE' END
+WHERE "recommended_action" IN ('ALERT', 'STORE');
