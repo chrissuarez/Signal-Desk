@@ -10,6 +10,7 @@
 
 import { parseEmailBody, classifyOpportunity } from '../../engine/parser.js';
 import { analyzeOpportunityWithAI } from '../aiService.js';
+import { EMPTY_STRATEGIC_ANALYSIS } from '../../engine/strategicAnalysis.js';
 import type { ExtractedOpportunity, RawSource } from './types.js';
 
 export interface ExtractionAdapter {
@@ -38,6 +39,7 @@ export const defaultExtraction: ExtractionAdapter = {
         reasons: [],
         concerns: ['AI analysis skipped (no API key)'],
         strategicCategory: null,
+        strategicAnalysis: EMPTY_STRATEGIC_ANALYSIS,
       },
     ];
   },
