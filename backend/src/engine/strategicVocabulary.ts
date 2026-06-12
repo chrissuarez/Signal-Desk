@@ -42,5 +42,11 @@ export const coerceStrategicCategory = (raw: unknown): StrategicCategory | null 
     : null;
 };
 
-/** Risk-flag / confidence level. */
-export type RiskLevel = 'LOW' | 'MEDIUM' | 'HIGH';
+/**
+ * Risk-flag severity level. Runtime tuple is the single source of truth; the type is
+ * derived from it so the two can never drift — same pattern as STRATEGIC_CATEGORIES.
+ * A distinct axis from the existing `confidence` field (AI field-extraction confidence).
+ */
+export const RISK_LEVELS = ['LOW', 'MEDIUM', 'HIGH'] as const;
+
+export type RiskLevel = (typeof RISK_LEVELS)[number];
