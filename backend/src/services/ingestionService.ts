@@ -23,7 +23,7 @@ import { defaultExtraction, type ExtractionAdapter } from './ingestion/extractio
 import { httpDeepScrape, type DeepScrapeAdapter } from './ingestion/deepScrape.js';
 import { aiStrategicAnalysis, type StrategicAnalysisAdapter } from './ingestion/strategicAnalysis.js';
 import { dbCostGate, type CostGate } from './ingestion/costGate.js';
-import { fitScoreToSignals } from './ingestion/recommendedActionAdapter.js';
+import { scoreToSignals } from './ingestion/recommendedActionAdapter.js';
 import type {
     IngestionError,
     IngestionPreferences,
@@ -142,11 +142,6 @@ const processOpportunity = async (
         ...(analysis.location !== undefined ? { location: analysis.location } : {}),
         preferences,
     });
-    // ADR-0005 (#13): ingestion writes the system's `recommendedAction` and no longer
-    // writes `status` — `status` is now purely the user's lifecycle field. The legacy
-    // fitScore adapter feeds degenerate signals, so only the null-category fallback fires.
-    let recommendedAction = decideRecommendedAction(fitScoreToSignals(scored.fitScore));
-
     // Strategic Analysis fields (#3): the LLM-judged block persisted raw, plus the
     // Practical Fit Component Score sourced from the Fit Score (not the LLM). The
     // headline Strategic Score (#4, ADR-0001) is computed from that block here and
@@ -156,6 +151,13 @@ const processOpportunity = async (
         practicalFit: scored.fitScore,
     };
     const strategicScore = computeStrategicScore(strategicFields);
+
+    // ADR-0005 (#13): ingestion writes the system's `recommendedAction` and no longer
+    // writes `status` — `status` is now purely the user's lifecycle field. ADR-0001 (#4):
+    // routing follows the Strategic Score (null → 0, i.e. un-scored never alerts), so
+    // ALERT/top-of-dashboard is Strategic-driven, not Fit-driven. The degenerate adapter
+    // still nulls the category, so only the null-category fallback fires until #7b.
+    let recommendedAction = decideRecommendedAction(scoreToSignals(strategicScore ?? 0));
 
     const insertedRow = await deps.persist.upsertByCanonicalUrl({
         type: analysis.type,
@@ -219,12 +221,12 @@ const processOpportunity = async (
                         location: finalAnalysis.location,
                         preferences,
                     });
-                    recommendedAction = decideRecommendedAction(fitScoreToSignals(finalScored.fitScore));
-
                     const finalStrategicFields = {
                         ...finalAnalysis.strategicAnalysis,
                         practicalFit: finalScored.fitScore,
                     };
+                    const finalStrategicScore = computeStrategicScore(finalStrategicFields);
+                    recommendedAction = decideRecommendedAction(scoreToSignals(finalStrategicScore ?? 0));
 
                     await deps.persist.updateById(insertedRow.id, {
                         description: scraped.description,
@@ -234,7 +236,7 @@ const processOpportunity = async (
                         concerns: [...finalAnalysis.concerns, ...finalScored.concerns],
                         strategicCategory: finalAnalysis.strategicCategory,
                         ...finalStrategicFields,
-                        strategicScore: computeStrategicScore(finalStrategicFields),
+                        strategicScore: finalStrategicScore,
                         recommendedAction,
                         updatedAt: new Date(),
                     });

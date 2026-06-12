@@ -66,7 +66,16 @@ const EXTRACTED: ExtractedOpportunity[] = [
         type: 'JOB', title: 'Senior Engineer TypeScript AI', company: 'Acme',
         description: 'Remote position', location: 'Remote', sourceUrl: 'https://example.com/job1',
         reasons: ['extracted reason'], concerns: [], strategicCategory: 'STRATEGIC_FIT',
-        strategicAnalysis: EMPTY_STRATEGIC_ANALYSIS,
+        // Populated Pass-1 block scoring sub-threshold strategically (64) despite the high
+        // Fit Score (85): proves routing follows the Strategic Score, not the Fit Score.
+        // Pass 2 overwrites these with the deeper block below.
+        strategicAnalysis: {
+            consultancyAlignment: 70, deliveryVisibility: 60, commercialProximity: 55,
+            buyerEnvironmentFit: 50, seniorityScope: 65,
+            resourceAdminTrapRisk: 'LOW', seoComfortZoneRisk: 'LOW',
+            realRoleInterpretation: 'Shallow first pass.', consultancyRelevance: 'Some.',
+            strategicReasons: ['shallow'], strategicConcerns: [], recommendedScreeningQuestions: [],
+        },
     },
     { type: 'NOISE', title: 'Newsletter', description: 'unrelated', reasons: [], concerns: [], strategicCategory: null, strategicAnalysis: EMPTY_STRATEGIC_ANALYSIS },
     {
@@ -143,8 +152,9 @@ describe('runIngestion (fake-backed pipeline)', () => {
         expect(summary.deepAnalyzed).toBe(1);       // and it has a sourceUrl, so Pass 2 runs
         expect(summary.created).toBe(3);            // high + mid + low; NOISE is not persisted
         expect(summary.updated).toBe(0);
-        // Live null-category fallback: ≥80 → ALERT, else STORE. No DIGEST/SUPPRESS until #7b.
-        expect(summary.byRecommendedAction).toEqual({ ALERT: 1, DIGEST: 0, STORE: 2, SUPPRESS: 0 });
+        // Routing now follows the Strategic Score (#4): all three rows score < 80
+        // strategically, so all STORE — even the 85-Fit row. No DIGEST/SUPPRESS until #7b.
+        expect(summary.byRecommendedAction).toEqual({ ALERT: 0, DIGEST: 0, STORE: 3, SUPPRESS: 0 });
         expect(summary.errors).toEqual([]);
 
         // Persisted rows: NOISE never lands; the three jobs do, at their routed action.
@@ -153,12 +163,14 @@ describe('runIngestion (fake-backed pipeline)', () => {
         const mid = rows.get('gmail://msgA#2');
         const low = rows.get('gmail://msgA#3');
 
-        expect(high?.recommendedAction).toBe('ALERT');
+        // High Fit (85) but sub-threshold Strategic (66) → STORE, NOT ALERT: the #4 fix
+        // means the Fit Score no longer floats a role to the top of the dashboard.
+        expect(high?.recommendedAction).toBe('STORE');
         expect(high?.fitScore).toBe(85);
         expect(high?.description).toBe(SCRAPED_DESCRIPTION); // Pass 2 replaced the body
         expect(high?.strategicCategory).toBe('STRATEGIC_FIT'); // persisted from analysis (#2)
 
-        expect(mid?.recommendedAction).toBe('STORE');        // 60 < 80 → STORE (was DISMISSED-hidden)
+        expect(mid?.recommendedAction).toBe('STORE');        // strategic 33 < 80 → STORE
         expect(mid?.fitScore).toBe(60);
         expect(mid?.strategicCategory).toBe('USEFUL_BRIDGE');
 
@@ -191,9 +203,45 @@ describe('runIngestion (fake-backed pipeline)', () => {
         // Ingestion no longer writes status — it is purely the user's lifecycle field now.
         expect(high?.status).toBeUndefined();
 
-        // Exactly one immediate alert, for the 85-fit job (recommendedAction === 'ALERT').
+        // No immediate alert fires: no row clears the Strategic Score threshold, so the
+        // high Fit Score alone no longer triggers one (the #4 / P1 fix).
+        expect(alerted).toHaveLength(0);
+    });
+
+    it('alerts on a strong Strategic Score even when the Fit Score is low (#4)', async () => {
+        // The mirror of the regression above: a role whose Strategic Score clears the
+        // threshold ALERTs even though its Fit Score (neutral body → 50) does not —
+        // proving ALERT is driven by the Strategic Score, not the Fit Score.
+        const standout: ExtractedOpportunity = {
+            type: 'JOB', title: 'Consultancy Delivery Lead', company: 'Delta',
+            description: 'A senior role', sourceUrl: null, reasons: [], concerns: [], strategicCategory: null,
+            strategicAnalysis: {
+                consultancyAlignment: 95, deliveryVisibility: 95, commercialProximity: 95,
+                buyerEnvironmentFit: 95, seniorityScope: 95,
+                resourceAdminTrapRisk: 'LOW', seoComfortZoneRisk: 'LOW',
+                realRoleInterpretation: 'A standout strategic fit.', consultancyRelevance: 'Direct.',
+                strategicReasons: ['owns delivery'], strategicConcerns: [], recommendedScreeningQuestions: [],
+            },
+        };
+        const alerted: OpportunityRow[] = [];
+        const { adapter: persist, rows } = makePersistDouble();
+        const deps: IngestionDeps = {
+            ...defaultDeps,
+            persist,
+            intake: { fetchSources: async () => [SOURCES[0]!] },
+            extraction: { extract: async () => [standout] },
+            costGate: { digestAlreadyExtracted: async () => false, deepAlreadyDone: () => false },
+            sendAlert: async (row) => { alerted.push(row); },
+            loadPreferences: async () => ({ keywords: ['engineer'], locations: [], locationWeights: {} }),
+        };
+
+        await runIngestion({}, deps);
+
+        const row = rows.get('gmail://msgA#0');
+        expect(row?.fitScore).toBe(50);                              // neutral → midpoint, below threshold
+        expect(row?.strategicScore).toBeGreaterThanOrEqual(80);      // strong components → clears it
+        expect(row?.recommendedAction).toBe('ALERT');
         expect(alerted).toHaveLength(1);
-        expect(alerted[0]?.canonicalUrl).toBe('gmail://msgA#0');
     });
 
     it('isolates a poison source: records the failure and continues the run', async () => {
