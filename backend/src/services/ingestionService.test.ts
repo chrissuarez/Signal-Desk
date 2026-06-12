@@ -195,10 +195,11 @@ describe('runIngestion (fake-backed pipeline)', () => {
         // Strategic Score (#4) is computed from the persisted block and is the ranking
         // authority — distinct from the Fit Score above. High ran Pass 2 (deep block):
         // weighted 76.25 − 10 (SEO MEDIUM) = 66. Mid (Pass-1 block): 47.75 − 15 (trap
-        // MEDIUM) = 33. Low has only practicalFit judged → renormalizes to that 20.
+        // MEDIUM) = 33. Low was never strategically analysed (EMPTY block) — only its
+        // Fit-sourced practicalFit is present, which never fabricates a headline → null.
         expect(high?.strategicScore).toBe(66);
         expect(mid?.strategicScore).toBe(33);
-        expect(low?.strategicScore).toBe(20);
+        expect(low?.strategicScore).toBeNull();
 
         // Ingestion no longer writes status — it is purely the user's lifecycle field now.
         expect(high?.status).toBeUndefined();

@@ -84,6 +84,39 @@ describe('computeStrategicScore', () => {
     expect(computeStrategicScore(input)).toBe(75);
   });
 
+  it('returns null when only practicalFit is present (Fit-only fallback never fabricates a headline)', () => {
+    // The EMPTY_STRATEGIC_ANALYSIS path: the LLM judged nothing, yet practicalFit is always
+    // sourced from the Fit Score. A high Fit must NOT masquerade as a Strategic Score (it
+    // would wrongly clear the ALERT threshold), so the headline stays null/unknown.
+    const fitOnly: StrategicScoreInput = {
+      consultancyAlignment: null,
+      deliveryVisibility: null,
+      commercialProximity: null,
+      buyerEnvironmentFit: null,
+      seniorityScope: null,
+      practicalFit: 85,
+      resourceAdminTrapRisk: null,
+      seoComfortZoneRisk: null,
+    };
+    expect(computeStrategicScore(fitOnly)).toBeNull();
+  });
+
+  it('counts practicalFit toward the headline once any LLM component is judged', () => {
+    // consultancyAlignment (w30) = 100 + practicalFit (w10) = 0 → (100·30)/(30+10) = 75.
+    // practicalFit still contributes its weight — it only cannot *alone* make a row scored.
+    const input: StrategicScoreInput = {
+      consultancyAlignment: 100,
+      deliveryVisibility: null,
+      commercialProximity: null,
+      buyerEnvironmentFit: null,
+      seniorityScope: null,
+      practicalFit: 0,
+      resourceAdminTrapRisk: null,
+      seoComfortZoneRisk: null,
+    };
+    expect(computeStrategicScore(input)).toBe(75);
+  });
+
   it('returns null when no component was judged (never a fake 0)', () => {
     const empty: StrategicScoreInput = {
       consultancyAlignment: null,

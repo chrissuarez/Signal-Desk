@@ -4,13 +4,14 @@ ALTER TABLE "opportunities" ADD COLUMN "strategic_score" integer;--> statement-b
 -- (30/20/15/15/10/10) over the *judged* Component Scores — renormalised, so a null
 -- component is excluded rather than counted as zero — minus the SEO (max 20) and trap
 -- (max 30) penalties scaled by severity (LOW/null 0, MEDIUM ½, HIGH full), rounded and
--- clamped to 0–100. A row with no judged component at all stays NULL ("unknown", not a
--- fake 0), consistent with fresh ingestion.
+-- clamped to 0–100. A row with no LLM-judged component stays NULL ("unknown", not a fake
+-- 0): practical_fit is Fit-sourced and always present, so it contributes to the headline
+-- but never, alone, fabricates one — matching computeStrategicScore and fresh ingestion.
 UPDATE "opportunities" AS o SET "strategic_score" = b.score
 FROM (
   SELECT
     id,
-    CASE WHEN denom = 0 THEN NULL
+    CASE WHEN NOT has_llm THEN NULL
          ELSE GREATEST(0, LEAST(100, ROUND(num::numeric / denom - seo_pen - trap_pen)))::int
     END AS score
   FROM (
@@ -28,6 +29,11 @@ FROM (
         + (buyer_environment_fit IS NOT NULL)::int * 15
         + (seniority_scope IS NOT NULL)::int * 10
         + (practical_fit IS NOT NULL)::int * 10 AS denom,
+      (consultancy_alignment IS NOT NULL
+        OR delivery_visibility IS NOT NULL
+        OR commercial_proximity IS NOT NULL
+        OR buyer_environment_fit IS NOT NULL
+        OR seniority_scope IS NOT NULL) AS has_llm,
       CASE seo_comfort_zone_risk WHEN 'HIGH' THEN 20 WHEN 'MEDIUM' THEN 10 ELSE 0 END AS seo_pen,
       CASE resource_admin_trap_risk WHEN 'HIGH' THEN 30 WHEN 'MEDIUM' THEN 15 ELSE 0 END AS trap_pen
     FROM "opportunities"

@@ -18,7 +18,9 @@
  *   2. Missing components renormalize — a null component was *not judged*, not judged
  *      zero. We average only the components that are present (rescaling their weights), so
  *      a partially-judged role is neither helped nor dragged down by the gaps. A role with
- *      no components at all scores null (un-analysed), mirroring EMPTY_STRATEGIC_ANALYSIS.
+ *      no LLM-judged component scores null (un-analysed), mirroring EMPTY_STRATEGIC_ANALYSIS
+ *      — practicalFit (Fit-sourced) contributes to the headline but cannot, alone, make an
+ *      un-analysed role look scored (else its Fit Score would masquerade as the headline).
  *
  * The weights and penalty maxima are configurable (matching how Chris already tunes
  * industry weights) — pass a StrategicScoreConfig to override the ADR-0003 defaults.
@@ -77,8 +79,9 @@ const clamp = (n: number, lo: number, hi: number): number => Math.min(hi, Math.m
 
 /**
  * Compute the headline Strategic Score from a block of components + risk flags.
- * Returns an integer 0–100, or null when no component was judged (so an un-analysed
- * Opportunity reads as "unknown", not as a real lowest score).
+ * Returns an integer 0–100, or null when no LLM component was judged (so an un-analysed
+ * Opportunity reads as "unknown", not as a real lowest score — and a Fit-only fallback
+ * never fabricates a headline from the Fit Score alone).
  */
 export const computeStrategicScore = (
   input: StrategicScoreInput,
@@ -94,6 +97,21 @@ export const computeStrategicScore = (
     ['practicalFit', input.practicalFit],
   ];
 
+  // The Strategic Score reflects *strategic* analysis. `practicalFit` is the Fit-sourced
+  // Practical Fit component, not a standalone score — it contributes to the headline when
+  // the role was judged, but it must not, on its own, make an un-analysed role look scored.
+  // So if the LLM judged none of its five components (an EMPTY analysis: no key / parse
+  // failure), the score is null even though practicalFit is always present from the Fit
+  // Score. Otherwise a high-Fit/unanalysed row would fabricate a Strategic Score equal to
+  // its Fit Score and could wrongly ALERT — exactly the Fit-driven ranking ADR-0001 retires.
+  const hasJudgedComponent =
+    input.consultancyAlignment !== null ||
+    input.deliveryVisibility !== null ||
+    input.commercialProximity !== null ||
+    input.buyerEnvironmentFit !== null ||
+    input.seniorityScope !== null;
+  if (!hasJudgedComponent) return null;
+
   let weightedSum = 0;
   let weightTotal = 0;
   for (const [key, score] of components) {
@@ -103,7 +121,7 @@ export const computeStrategicScore = (
     weightTotal += weight;
   }
 
-  // No component was judged → unknown, not zero (mirrors the EMPTY analysis).
+  // Defensive: with a judged component above this is unreachable, but never divide by zero.
   if (weightTotal === 0) return null;
 
   const headline = weightedSum / weightTotal; // weighted average over judged components, 0–100
