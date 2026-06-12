@@ -2,8 +2,19 @@
 
 import { useEffect, useState } from 'react';
 import { fetchOpportunities, triggerIngestion, submitFeedback, fetchSettings, updateSettings, API_BASE_URL } from '@/lib/api';
-import { Opportunity } from '../types';
+import { Opportunity, StrategicCategory } from '../types';
 import { getRefinedIndustryList } from '@/lib/industryUtils';
+
+// Strategic Category badge presentation (#2). Category encodes *what kind* of role this
+// is; colour reflects strategic value (green good → red off-target → grey unclear).
+const CATEGORY_BADGE: Record<StrategicCategory, { label: string; className: string }> = {
+  STRATEGIC_FIT: { label: 'Strategic Fit', className: 'bg-green-900/40 text-green-300 border-green-700/50' },
+  USEFUL_BRIDGE: { label: 'Useful Bridge', className: 'bg-blue-900/40 text-blue-300 border-blue-700/50' },
+  SEO_COMFORT_ZONE: { label: 'SEO Comfort Zone', className: 'bg-amber-900/40 text-amber-300 border-amber-700/50' },
+  RESOURCE_ADMIN_TRAP: { label: 'Resource/Admin Trap', className: 'bg-red-900/40 text-red-300 border-red-700/50' },
+  GENERIC_OPS_UNCLEAR: { label: 'Generic / Unclear', className: 'bg-gray-700 text-gray-300 border-gray-600' },
+  REJECT: { label: 'Reject', className: 'bg-red-950/50 text-red-400 border-red-800/50' },
+};
 
 export default function Dashboard() {
   const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
@@ -331,6 +342,11 @@ export default function Dashboard() {
                       )}
                       <p className="text-blue-300 font-medium">{opp.company}</p>
                       <div className="flex flex-wrap gap-2 mt-2">
+                        {opp.strategicCategory && (
+                          <span className={`text-xs font-bold px-2 py-0.5 rounded border ${CATEGORY_BADGE[opp.strategicCategory].className}`}>
+                            🎯 {CATEGORY_BADGE[opp.strategicCategory].label}
+                          </span>
+                        )}
                         {opp.industry && <span className="text-xs bg-gray-700 text-gray-300 px-2 py-0.5 rounded border border-gray-600">🏢 {opp.industry}</span>}
                         {opp.location && <span className="text-xs bg-gray-700 text-gray-300 px-2 py-0.5 rounded border border-gray-600">📍 {opp.location}</span>}
                         {opp.remoteStatus && <span className="text-xs bg-gray-700 text-gray-300 px-2 py-0.5 rounded border border-gray-600">☁️ {opp.remoteStatus}</span>}

@@ -5,6 +5,16 @@ export const sourceEnum = pgEnum('source', ['EMAIL', 'RSS', 'WEB']);
 export const confidenceEnum = pgEnum('confidence', ['LOW', 'MEDIUM', 'HIGH']);
 export const recommendedActionEnum = pgEnum('recommended_action', ['ALERT', 'DIGEST', 'STORE', 'SUPPRESS']);
 export const opportunityStatusEnum = pgEnum('opportunity_status', ['NEW', 'SENT', 'SAVED', 'DISMISSED', 'APPLIED']);
+// Strategic Category (#2): the six CONTEXT.md labels for *what kind* of role this is.
+// LLM-proposed and persisted raw here; deterministic reconciliation lands later (#5).
+export const strategicCategoryEnum = pgEnum('strategic_category', [
+  'STRATEGIC_FIT',
+  'USEFUL_BRIDGE',
+  'SEO_COMFORT_ZONE',
+  'RESOURCE_ADMIN_TRAP',
+  'GENERIC_OPS_UNCLEAR',
+  'REJECT',
+]);
 
 export const opportunities = pgTable('opportunities', {
   id: serial('id').primaryKey(),
@@ -32,6 +42,7 @@ export const opportunities = pgTable('opportunities', {
   reasons: jsonb('reasons').$type<string[]>(), // top 5 reasons
   concerns: jsonb('concerns').$type<string[]>(), // top 3 concerns
   tags: jsonb('tags').$type<string[]>(),
+  strategicCategory: strategicCategoryEnum('strategic_category'), // nullable; null until analysed (#2)
   recommendedAction: recommendedActionEnum('recommended_action').default('STORE'),
   status: opportunityStatusEnum('status').default('NEW'),
 

@@ -1,0 +1,2 @@
+CREATE TYPE "public"."strategic_category" AS ENUM('STRATEGIC_FIT', 'USEFUL_BRIDGE', 'SEO_COMFORT_ZONE', 'RESOURCE_ADMIN_TRAP', 'GENERIC_OPS_UNCLEAR', 'REJECT');--> statement-breakpoint
+ALTER TABLE "opportunities" ADD COLUMN "strategic_category" "strategic_category";

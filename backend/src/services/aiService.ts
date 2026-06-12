@@ -2,6 +2,7 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { coerceStrategicCategory, type StrategicCategory } from '../engine/strategicVocabulary.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -22,6 +23,8 @@ export interface AIAnalysisResult {
   sourceUrl?: string;
   reasons: string[];
   concerns: string[];
+  /** The six-label Strategic Category proposed by the LLM (#2); null if absent/unknown. */
+  strategicCategory: StrategicCategory | null;
 }
 
 export const analyzeOpportunityWithAI = async (text: string): Promise<AIAnalysisResult[]> => {
@@ -52,13 +55,28 @@ export const analyzeOpportunityWithAI = async (text: string): Promise<AIAnalysis
     - Legal
     - Other
 
+    STRATEGIC CATEGORY:
+    Classify each opportunity into EXACTLY ONE Strategic Category — what *kind* of role
+    it is for someone building toward an agency delivery-visibility / resourcing
+    consultancy:
+    - STRATEGIC_FIT: directly compounds that goal (delivery leadership, PMO, delivery
+      operations, resource/capacity management at a strategic level).
+    - USEFUL_BRIDGE: an adjacent role that plausibly bridges toward that goal.
+    - SEO_COMFORT_ZONE: an SEO / search / content role — familiar but does not advance
+      the strategic goal.
+    - RESOURCE_ADMIN_TRAP: resourcing/scheduling/coordination that is administrative and
+      low-leverage despite sounding relevant.
+    - GENERIC_OPS_UNCLEAR: generic operations, or too vague to place.
+    - REJECT: clearly off-target or irrelevant.
+
     For each JOB or BUSINESS opportunity:
     1. Extract the title, company, and precise location.
     2. Assign the single most relevant "industry" from the list above.
     3. Determine Remote Status (Remote, Hybrid, or On-site) based on text clues.
     4. Extract the direct link (URL) to the position if available in the text.
     5. Provide a list of reasons why it qualifies and any concerns.
-    
+    6. Assign the single best "strategicCategory" from the six values above.
+
     Return the result EXACTLY as a JSON array of objects:
     [
       {
@@ -71,7 +89,8 @@ export const analyzeOpportunityWithAI = async (text: string): Promise<AIAnalysis
         "description": "Brief summarized description (max 100 words).",
         "sourceUrl": "Direct URL if found, otherwise null",
         "reasons": ["reason 1", "reason 2"],
-        "concerns": ["concern 1", "concern 2"]
+        "concerns": ["concern 1", "concern 2"],
+        "strategicCategory": "One of the six Strategic Category values above"
       }
     ]
     
@@ -85,7 +104,13 @@ export const analyzeOpportunityWithAI = async (text: string): Promise<AIAnalysis
     const textResponse = response.text();
     const jsonStr = textResponse.replace(/```json|```/g, '').trim();
     const parsed = JSON.parse(jsonStr);
-    return Array.isArray(parsed) ? parsed : [parsed];
+    const results = Array.isArray(parsed) ? parsed : [parsed];
+    // Validate the untrusted LLM category against the six known labels (#2); unknown
+    // or missing → null, so a bad label degrades to "uncategorised" not a write error.
+    return results.map((o: any) => ({
+      ...o,
+      strategicCategory: coerceStrategicCategory(o?.strategicCategory),
+    }));
   } catch (error) {
     console.error('AI Analysis failed:', error);
     return [{
@@ -97,7 +122,8 @@ export const analyzeOpportunityWithAI = async (text: string): Promise<AIAnalysis
       remoteStatus: 'Unknown',
       description: text,
       reasons: [],
-      concerns: ['AI Analysis failed']
+      concerns: ['AI Analysis failed'],
+      strategicCategory: null
     }];
   }
 };

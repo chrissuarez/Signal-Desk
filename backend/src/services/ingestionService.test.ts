@@ -64,23 +64,23 @@ const EXTRACTED: ExtractedOpportunity[] = [
     {
         type: 'JOB', title: 'Senior Engineer TypeScript AI', company: 'Acme',
         description: 'Remote position', location: 'Remote', sourceUrl: 'https://example.com/job1',
-        reasons: ['extracted reason'], concerns: [],
+        reasons: ['extracted reason'], concerns: [], strategicCategory: 'STRATEGIC_FIT',
     },
-    { type: 'NOISE', title: 'Newsletter', description: 'unrelated', reasons: [], concerns: [] },
+    { type: 'NOISE', title: 'Newsletter', description: 'unrelated', reasons: [], concerns: [], strategicCategory: null },
     {
         type: 'JOB', title: 'Engineer Position', company: 'Beta',
-        description: 'A good opportunity', sourceUrl: null, reasons: [], concerns: [],
+        description: 'A good opportunity', sourceUrl: null, reasons: [], concerns: [], strategicCategory: 'USEFUL_BRIDGE',
     },
     {
         type: 'JOB', title: 'Junior Clerk', company: 'Gamma',
-        description: 'office filing work', location: 'Mars', sourceUrl: null, reasons: [], concerns: [],
+        description: 'office filing work', location: 'Mars', sourceUrl: null, reasons: [], concerns: [], strategicCategory: null,
     },
 ];
 
 const FINAL_ANALYSIS: AIAnalysisResult = {
     type: 'JOB', title: 'Senior Engineer TypeScript AI', company: 'Acme',
     industry: '', location: 'Remote', remoteStatus: 'REMOTE', description: SCRAPED_DESCRIPTION,
-    reasons: ['deep reason'], concerns: [],
+    reasons: ['deep reason'], concerns: [], strategicCategory: 'STRATEGIC_FIT',
 };
 
 /** Build deps: real pure seams from defaultDeps, fake I/O. Returns the persist double too. */
@@ -135,12 +135,15 @@ describe('runIngestion (fake-backed pipeline)', () => {
         expect(high?.recommendedAction).toBe('ALERT');
         expect(high?.fitScore).toBe(85);
         expect(high?.description).toBe(SCRAPED_DESCRIPTION); // Pass 2 replaced the body
+        expect(high?.strategicCategory).toBe('STRATEGIC_FIT'); // persisted from analysis (#2)
 
         expect(mid?.recommendedAction).toBe('STORE');        // 60 < 80 → STORE (was DISMISSED-hidden)
         expect(mid?.fitScore).toBe(60);
+        expect(mid?.strategicCategory).toBe('USEFUL_BRIDGE');
 
         expect(low?.recommendedAction).toBe('STORE');
         expect(low?.fitScore).toBe(20);
+        expect(low?.strategicCategory).toBeNull();           // uncategorised → null persisted
 
         // Ingestion no longer writes status — it is purely the user's lifecycle field now.
         expect(high?.status).toBeUndefined();
@@ -165,7 +168,7 @@ describe('runIngestion (fake-backed pipeline)', () => {
                     if (s.messageId === 'poison') throw new Error('boom: extraction failed');
                     return [{
                         type: 'JOB', title: 'Engineer Position', company: 'Beta',
-                        description: 'A good opportunity', sourceUrl: null, reasons: [], concerns: [],
+                        description: 'A good opportunity', sourceUrl: null, reasons: [], concerns: [], strategicCategory: null,
                     }];
                 },
             },

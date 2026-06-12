@@ -10,6 +10,8 @@
  * yet.
  */
 
+import type { StrategicCategory } from '../../engine/strategicVocabulary.js';
+
 /** User scoring preferences, as persisted under settings key `user_preferences`. */
 export interface IngestionPreferences {
   keywords: string[];
@@ -43,6 +45,8 @@ export interface ExtractedOpportunity {
   sourceUrl?: string | null;
   reasons: string[];
   concerns: string[];
+  /** LLM-proposed Strategic Category (#2); null when uncategorised or no-key fallback. */
+  strategicCategory: StrategicCategory | null;
 }
 
 /** Output of the Score + Category reconcile seam. */
