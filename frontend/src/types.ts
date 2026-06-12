@@ -9,6 +9,7 @@ export type StrategicCategory =
     | 'RESOURCE_ADMIN_TRAP'
     | 'GENERIC_OPS_UNCLEAR'
     | 'REJECT';
+export type RiskLevel = 'LOW' | 'MEDIUM' | 'HIGH';
 
 export interface Opportunity {
     id: number;
@@ -28,5 +29,19 @@ export interface Opportunity {
     reasons: string[] | null;
     concerns: string[] | null;
     strategicCategory: StrategicCategory | null;
+    // Strategic Analysis fields (#3), returned by GET /opportunities. Null until analysed.
+    consultancyAlignment: number | null;
+    deliveryVisibility: number | null;
+    commercialProximity: number | null;
+    buyerEnvironmentFit: number | null;
+    seniorityScope: number | null;
+    practicalFit: number | null;
+    resourceAdminTrapRisk: RiskLevel | null;
+    seoComfortZoneRisk: RiskLevel | null;
+    realRoleInterpretation: string | null;
+    consultancyRelevance: string | null;
+    strategicReasons: string[] | null;
+    strategicConcerns: string[] | null;
+    recommendedScreeningQuestions: string[] | null;
     status: OpportunityStatus;
 }

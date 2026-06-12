@@ -1,4 +1,4 @@
-import type { StrategicCategory } from './engine/strategicVocabulary.js';
+import type { StrategicCategory, RiskLevel } from './engine/strategicVocabulary.js';
 
 export type OpportunityType = 'JOB' | 'BUSINESS' | 'NOISE';
 export type SourceType = 'EMAIL' | 'RSS' | 'WEB';
@@ -20,5 +20,21 @@ export interface Opportunity {
     reasons: string[] | null;
     concerns: string[] | null;
     strategicCategory: StrategicCategory | null;
+    // Strategic Analysis fields (#3). Null until an Opportunity has been analysed; the
+    // six Component Scores, two risk flags, narrative + array fields. practicalFit is the
+    // demoted Fit Score, the rest are LLM-judged. No Strategic Score yet (that's #4).
+    consultancyAlignment: number | null;
+    deliveryVisibility: number | null;
+    commercialProximity: number | null;
+    buyerEnvironmentFit: number | null;
+    seniorityScope: number | null;
+    practicalFit: number | null;
+    resourceAdminTrapRisk: RiskLevel | null;
+    seoComfortZoneRisk: RiskLevel | null;
+    realRoleInterpretation: string | null;
+    consultancyRelevance: string | null;
+    strategicReasons: string[] | null;
+    strategicConcerns: string[] | null;
+    recommendedScreeningQuestions: string[] | null;
     status: OpportunityStatus;
 }
