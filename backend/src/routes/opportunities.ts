@@ -9,13 +9,15 @@ const router = Router();
 router.get('/', async (req, res) => {
     try {
         // ADR-0005 (#13): route on the system's recommendedAction — hide SUPPRESS rows
-        // from the default view (kept, never deleted) and float ALERT rows to the top,
-        // then by score, then recency. (Null/legacy rows are treated as not-suppressed.)
+        // from the default view (kept, never deleted) and float ALERT rows to the top.
+        // ADR-0001 (#4): the Strategic Score is now the ranking authority — order by it
+        // (not the Fit Score), with un-scored rows last, then recency as the tiebreak.
+        // (Null/legacy rows are treated as not-suppressed.)
         const items = await db.query.opportunities.findMany({
             where: or(isNull(opportunities.recommendedAction), ne(opportunities.recommendedAction, 'SUPPRESS')),
             orderBy: [
                 desc(sql`${opportunities.recommendedAction} = 'ALERT'`),
-                desc(opportunities.fitScore),
+                sql`${opportunities.strategicScore} DESC NULLS LAST`,
                 desc(opportunities.receivedAt),
             ],
         });

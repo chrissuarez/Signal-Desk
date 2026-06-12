@@ -20,9 +20,13 @@ export interface Opportunity {
     reasons: string[] | null;
     concerns: string[] | null;
     strategicCategory: StrategicCategory | null;
+    // The headline Strategic Score (#4, ADR-0001): the computed weighted sum of the six
+    // Component Scores minus the two risk penalties. The ranking authority — GET
+    // /opportunities orders by it. Null until an Opportunity has been scored.
+    strategicScore: number | null;
     // Strategic Analysis fields (#3). Null until an Opportunity has been analysed; the
     // six Component Scores, two risk flags, narrative + array fields. practicalFit is the
-    // demoted Fit Score, the rest are LLM-judged. No Strategic Score yet (that's #4).
+    // demoted Fit Score, the rest are LLM-judged. The Strategic Score above aggregates them.
     consultancyAlignment: number | null;
     deliveryVisibility: number | null;
     commercialProximity: number | null;
