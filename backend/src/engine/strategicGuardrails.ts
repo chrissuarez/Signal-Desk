@@ -29,6 +29,28 @@ export interface GuardrailSettings {
   tier1Keywords: string[];
 }
 
+/**
+ * Brief-seeded Guardrail defaults (CONTEXT.md: the goal is a delivery-visibility / resourcing
+ * consultancy, NOT more SEO). Starting values, fully tunable in settings without a redeploy:
+ *   - excluded: reputationally off-strategy industries that veto outright;
+ *   - penalty: comfort-zone / resource-admin tells that cap the score;
+ *   - tier-1: delivery/resourcing/consultancy signals that floor the score.
+ */
+export const DEFAULT_GUARDRAILS: GuardrailSettings = {
+  excludedIndustries: ['Gambling', 'Adult Entertainment', 'MLM'],
+  penaltyKeywords: ['link building', 'data entry', 'cold calling', 'keyword stuffing'],
+  tier1Keywords: [
+    'delivery lead',
+    'head of delivery',
+    'delivery director',
+    'resource management',
+    'capacity planning',
+    'consultancy',
+    'practice lead',
+    'engagement manager',
+  ],
+};
+
 /** The numeric bounds a Guardrail applies (configurable; ADR defaults below). */
 export interface GuardrailConfig {
   /** Upper bound imposed when a penalty keyword hits. */

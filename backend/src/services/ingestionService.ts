@@ -13,6 +13,7 @@ import { legacyScoreReconcile, type ScoreReconcile } from '../engine/scoreReconc
 import { legacyPreFilter, type StrategicPreFilter } from '../engine/strategicPreFilter.js';
 import { decideRecommendedAction } from '../engine/recommendedActionRouting.js';
 import { computeStrategicScore } from '../engine/strategicScoring.js';
+import { DEFAULT_GUARDRAILS, type GuardrailSettings } from '../engine/strategicGuardrails.js';
 import { sendImmediateAlert } from './notificationService.js';
 import { db } from '../db/index.js';
 import { settings } from '../db/schema.js';
@@ -48,6 +49,8 @@ export interface IngestionDeps {
     sendAlert: (row: OpportunityRow) => Promise<void>;
     /** Load the user's scoring preferences (once per run, reused across digests). */
     loadPreferences: () => Promise<IngestionPreferences>;
+    /** Load the configurable Guardrail inputs (once per run, reused across digests). */
+    loadGuardrails: () => Promise<GuardrailSettings>;
 }
 
 const DEFAULT_PREFERENCES: IngestionPreferences = {
@@ -63,6 +66,14 @@ const dbLoadPreferences = async (): Promise<IngestionPreferences> => {
     return (prefsRecord?.value as IngestionPreferences) || DEFAULT_PREFERENCES;
 };
 
+/** Production Guardrail-inputs loader: the `strategic_guardrails` settings row, with a fallback. */
+const dbLoadGuardrails = async (): Promise<GuardrailSettings> => {
+    const record = await db.query.settings.findFirst({
+        where: eq(settings.key, 'strategic_guardrails'),
+    });
+    return (record?.value as GuardrailSettings) || DEFAULT_GUARDRAILS;
+};
+
 /** The production wiring: real adapters behind every seam. */
 export const defaultDeps: IngestionDeps = {
     intake: gmailIntake,
@@ -75,6 +86,7 @@ export const defaultDeps: IngestionDeps = {
     costGate: dbCostGate,
     sendAlert: sendImmediateAlert,
     loadPreferences: dbLoadPreferences,
+    loadGuardrails: dbLoadGuardrails,
 };
 
 const emptySummary = (): IngestionRunSummary => ({

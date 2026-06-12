@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { applyScoreGuardrails, type GuardrailSettings } from './strategicGuardrails.js';
+import { applyScoreGuardrails, DEFAULT_GUARDRAILS, type GuardrailSettings } from './strategicGuardrails.js';
 
 const settings: GuardrailSettings = {
   excludedIndustries: ['Gambling', 'Adult'],
@@ -72,5 +72,21 @@ describe('applyScoreGuardrails', () => {
     expect(result.score).toBe(72);
     expect(result.forcedCategory).toBeUndefined();
     expect(result.concerns).toEqual([]);
+  });
+});
+
+describe('DEFAULT_GUARDRAILS', () => {
+  it('seeds non-empty brief defaults for all three input lists', () => {
+    expect(DEFAULT_GUARDRAILS.excludedIndustries.length).toBeGreaterThan(0);
+    expect(DEFAULT_GUARDRAILS.penaltyKeywords.length).toBeGreaterThan(0);
+    expect(DEFAULT_GUARDRAILS.tier1Keywords.length).toBeGreaterThan(0);
+  });
+
+  it('drives applyScoreGuardrails end to end (a brief tier-1 keyword floors the score)', () => {
+    const result = applyScoreGuardrails(
+      { score: 30, title: 'Delivery Lead', description: 'own delivery' },
+      DEFAULT_GUARDRAILS,
+    );
+    expect(result.score).toBe(60);
   });
 });
