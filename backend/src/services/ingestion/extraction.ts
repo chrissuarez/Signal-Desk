@@ -37,6 +37,7 @@ export const defaultExtraction: ExtractionAdapter = {
         description: body,
         reasons: [],
         concerns: ['AI analysis skipped (no API key)'],
+        strategicCategory: null,
       },
     ];
   },

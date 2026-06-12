@@ -64,23 +64,23 @@ const EXTRACTED: ExtractedOpportunity[] = [
     {
         type: 'JOB', title: 'Senior Engineer TypeScript AI', company: 'Acme',
         description: 'Remote position', location: 'Remote', sourceUrl: 'https://example.com/job1',
-        reasons: ['extracted reason'], concerns: [],
+        reasons: ['extracted reason'], concerns: [], strategicCategory: 'STRATEGIC_FIT',
     },
-    { type: 'NOISE', title: 'Newsletter', description: 'unrelated', reasons: [], concerns: [] },
+    { type: 'NOISE', title: 'Newsletter', description: 'unrelated', reasons: [], concerns: [], strategicCategory: null },
     {
         type: 'JOB', title: 'Engineer Position', company: 'Beta',
-        description: 'A good opportunity', sourceUrl: null, reasons: [], concerns: [],
+        description: 'A good opportunity', sourceUrl: null, reasons: [], concerns: [], strategicCategory: 'USEFUL_BRIDGE',
     },
     {
         type: 'JOB', title: 'Junior Clerk', company: 'Gamma',
-        description: 'office filing work', location: 'Mars', sourceUrl: null, reasons: [], concerns: [],
+        description: 'office filing work', location: 'Mars', sourceUrl: null, reasons: [], concerns: [], strategicCategory: null,
     },
 ];
 
 const FINAL_ANALYSIS: AIAnalysisResult = {
     type: 'JOB', title: 'Senior Engineer TypeScript AI', company: 'Acme',
     industry: '', location: 'Remote', remoteStatus: 'REMOTE', description: SCRAPED_DESCRIPTION,
-    reasons: ['deep reason'], concerns: [],
+    reasons: ['deep reason'], concerns: [], strategicCategory: 'STRATEGIC_FIT',
 };
 
 /** Build deps: real pure seams from defaultDeps, fake I/O. Returns the persist double too. */
@@ -165,7 +165,7 @@ describe('runIngestion (fake-backed pipeline)', () => {
                     if (s.messageId === 'poison') throw new Error('boom: extraction failed');
                     return [{
                         type: 'JOB', title: 'Engineer Position', company: 'Beta',
-                        description: 'A good opportunity', sourceUrl: null, reasons: [], concerns: [],
+                        description: 'A good opportunity', sourceUrl: null, reasons: [], concerns: [], strategicCategory: null,
                     }];
                 },
             },
