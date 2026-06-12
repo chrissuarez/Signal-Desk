@@ -66,6 +66,11 @@ export const opportunities = pgTable('opportunities', {
   strategicConcerns: jsonb('strategic_concerns').$type<string[]>(),
   recommendedScreeningQuestions: jsonb('recommended_screening_questions').$type<string[]>(),
 
+  // Strategic Score (#4): the headline ranking authority (ADR-0001), a computed weighted
+  // sum of the six Component Scores above minus the two risk penalties (engine/
+  // strategicScoring, ADR-0003). Nullable — null until an Opportunity has been scored.
+  strategicScore: integer('strategic_score'),
+
   recommendedAction: recommendedActionEnum('recommended_action').default('STORE'),
   status: opportunityStatusEnum('status').default('NEW'),
 
