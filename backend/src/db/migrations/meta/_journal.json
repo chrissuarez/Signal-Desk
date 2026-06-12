@@ -15,6 +15,13 @@
       "when": 1781210730339,
       "tag": "0001_noisy_nemesis",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1781253490702,
+      "tag": "0002_quiet_alex_wilder",
+      "breakpoints": true
     }
   ]
 }
