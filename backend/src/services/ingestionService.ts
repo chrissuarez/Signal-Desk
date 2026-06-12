@@ -12,6 +12,7 @@
 import { legacyScoreReconcile, type ScoreReconcile } from '../engine/scoreReconcile.js';
 import { legacyPreFilter, type StrategicPreFilter } from '../engine/strategicPreFilter.js';
 import { decideRecommendedAction } from '../engine/recommendedActionRouting.js';
+import { computeStrategicScore } from '../engine/strategicScoring.js';
 import { sendImmediateAlert } from './notificationService.js';
 import { db } from '../db/index.js';
 import { settings } from '../db/schema.js';
@@ -22,7 +23,7 @@ import { defaultExtraction, type ExtractionAdapter } from './ingestion/extractio
 import { httpDeepScrape, type DeepScrapeAdapter } from './ingestion/deepScrape.js';
 import { aiStrategicAnalysis, type StrategicAnalysisAdapter } from './ingestion/strategicAnalysis.js';
 import { dbCostGate, type CostGate } from './ingestion/costGate.js';
-import { fitScoreToSignals } from './ingestion/recommendedActionAdapter.js';
+import { scoreToSignals } from './ingestion/recommendedActionAdapter.js';
 import type {
     IngestionError,
     IngestionPreferences,
@@ -141,19 +142,22 @@ const processOpportunity = async (
         ...(analysis.location !== undefined ? { location: analysis.location } : {}),
         preferences,
     });
-    // ADR-0005 (#13): ingestion writes the system's `recommendedAction` and no longer
-    // writes `status` — `status` is now purely the user's lifecycle field. The legacy
-    // fitScore adapter feeds degenerate signals, so only the null-category fallback fires.
-    let recommendedAction = decideRecommendedAction(fitScoreToSignals(scored.fitScore));
-
     // Strategic Analysis fields (#3): the LLM-judged block persisted raw, plus the
-    // Practical Fit Component Score sourced from the Fit Score (not the LLM). No
-    // aggregation/ranking (#4) or category reconciliation (#5) yet — this slice only
-    // lands the data.
+    // Practical Fit Component Score sourced from the Fit Score (not the LLM). The
+    // headline Strategic Score (#4, ADR-0001) is computed from that block here and
+    // persisted alongside it — the ranking authority that replaces the Fit Score.
     const strategicFields = {
         ...analysis.strategicAnalysis,
         practicalFit: scored.fitScore,
     };
+    const strategicScore = computeStrategicScore(strategicFields);
+
+    // ADR-0005 (#13): ingestion writes the system's `recommendedAction` and no longer
+    // writes `status` — `status` is now purely the user's lifecycle field. ADR-0001 (#4):
+    // routing follows the Strategic Score (null → 0, i.e. un-scored never alerts), so
+    // ALERT/top-of-dashboard is Strategic-driven, not Fit-driven. The degenerate adapter
+    // still nulls the category, so only the null-category fallback fires until #7b.
+    let recommendedAction = decideRecommendedAction(scoreToSignals(strategicScore ?? 0));
 
     const insertedRow = await deps.persist.upsertByCanonicalUrl({
         type: analysis.type,
@@ -173,6 +177,7 @@ const processOpportunity = async (
         concerns: [...analysis.concerns, ...scored.concerns],
         strategicCategory: analysis.strategicCategory,
         ...strategicFields,
+        strategicScore,
         recommendedAction,
     }, {
         title: analysis.title,
@@ -187,53 +192,80 @@ const processOpportunity = async (
         concerns: [...analysis.concerns, ...scored.concerns],
         strategicCategory: analysis.strategicCategory,
         ...strategicFields,
+        strategicScore,
         recommendedAction,
         updatedAt: new Date(),
     });
 
     if (existing) summary.updated++; else summary.created++;
 
-    if (recommendedAction === 'ALERT' && insertedRow) {
-        await deps.sendAlert(insertedRow);
-    }
+    // The immediate alert fires once, on the FINAL recommendedAction (see below). Pass 2
+    // can still promote (STORE→ALERT) or demote (ALERT→STORE) this row, so notifying here
+    // on the Pass-1 decision would miss promotions and fire premature alerts on demotions.
+    let alertRow: OpportunityRow | undefined = insertedRow;
 
     // PASS 2: Deep Scrape for high-potential jobs.
     if (deps.preFilter({ fitScore: scored.fitScore })) {
         summary.preFilterPassed++;
         if (analysis.sourceUrl && !deps.costGate.deepAlreadyDone(existing)) {
-            console.log(`Pass 2: Triggering Deep Scrape for ${analysis.title} at ${analysis.company}...`);
-            const scraped = await deps.deepScrape.scrape(analysis.sourceUrl);
-            if (scraped && scraped.description.length > 500) {
-                console.log(`Pass 2: Re-analyzing with full description (Length: ${scraped.description.length})...`);
-                const deepAnalysis = await deps.strategicAnalysis.analyze(scraped.description);
-                const finalAnalysis = deepAnalysis?.[0];
-                if (finalAnalysis && insertedRow?.id) {
-                    const finalScored = deps.scoreReconcile({
-                        title: finalAnalysis.title,
-                        description: scraped.description,
-                        industry: finalAnalysis.industry,
-                        location: finalAnalysis.location,
-                        preferences,
-                    });
-                    recommendedAction = decideRecommendedAction(fitScoreToSignals(finalScored.fitScore));
+            // Deep scrape + re-analysis is optional enrichment. A transient scrape/analysis
+            // failure must not lose the Pass-1 decision or its alert — the row is already
+            // persisted on the Pass-1 recommendedAction — so it is isolated here: on error we
+            // record it and fall through to the single alert point below, which still fires on
+            // the Pass-1 decision (alertRow stays the Pass-1 row). This restores the pre-
+            // collapse behaviour where a Pass-1 ALERT survived a Pass-2 failure.
+            try {
+                console.log(`Pass 2: Triggering Deep Scrape for ${analysis.title} at ${analysis.company}...`);
+                const scraped = await deps.deepScrape.scrape(analysis.sourceUrl);
+                if (scraped && scraped.description.length > 500) {
+                    console.log(`Pass 2: Re-analyzing with full description (Length: ${scraped.description.length})...`);
+                    const deepAnalysis = await deps.strategicAnalysis.analyze(scraped.description);
+                    const finalAnalysis = deepAnalysis?.[0];
+                    if (finalAnalysis && insertedRow?.id) {
+                        const finalScored = deps.scoreReconcile({
+                            title: finalAnalysis.title,
+                            description: scraped.description,
+                            industry: finalAnalysis.industry,
+                            location: finalAnalysis.location,
+                            preferences,
+                        });
+                        const finalStrategicFields = {
+                            ...finalAnalysis.strategicAnalysis,
+                            practicalFit: finalScored.fitScore,
+                        };
+                        const finalStrategicScore = computeStrategicScore(finalStrategicFields);
+                        recommendedAction = decideRecommendedAction(scoreToSignals(finalStrategicScore ?? 0));
 
-                    await deps.persist.updateById(insertedRow.id, {
-                        description: scraped.description,
-                        requirements: finalAnalysis.reasons.join(', '), // Using reasons as a proxy for raw requirements extract
-                        fitScore: finalScored.fitScore,
-                        reasons: [...finalAnalysis.reasons, ...finalScored.reasons],
-                        concerns: [...finalAnalysis.concerns, ...finalScored.concerns],
-                        strategicCategory: finalAnalysis.strategicCategory,
-                        ...finalAnalysis.strategicAnalysis,
-                        practicalFit: finalScored.fitScore,
-                        recommendedAction,
-                        updatedAt: new Date(),
-                    });
-                    summary.deepAnalyzed++;
-                    console.log(`Pass 2 Complete: ${finalAnalysis.title} re-scored to ${finalScored.fitScore}`);
+                        const deepUpdate = {
+                            description: scraped.description,
+                            requirements: finalAnalysis.reasons.join(', '), // Using reasons as a proxy for raw requirements extract
+                            fitScore: finalScored.fitScore,
+                            reasons: [...finalAnalysis.reasons, ...finalScored.reasons],
+                            concerns: [...finalAnalysis.concerns, ...finalScored.concerns],
+                            strategicCategory: finalAnalysis.strategicCategory,
+                            ...finalStrategicFields,
+                            strategicScore: finalStrategicScore,
+                            recommendedAction,
+                            updatedAt: new Date(),
+                        };
+                        await deps.persist.updateById(insertedRow.id, deepUpdate);
+                        // Alert on the Pass-2 state, not the stale Pass-1 row.
+                        alertRow = { ...insertedRow, ...deepUpdate } as OpportunityRow;
+                        summary.deepAnalyzed++;
+                        console.log(`Pass 2 Complete: ${finalAnalysis.title} re-scored to ${finalScored.fitScore}`);
+                    }
                 }
+            } catch (error) {
+                // Keep the Pass-1 decision + alert; surface the deep-pass failure on the summary.
+                recordError(summary, { stage: 'deepScrape', messageId, canonicalUrl }, error);
             }
         }
+    }
+
+    // Single alert point: notify on the FINAL decision exactly once — so a Pass-2
+    // promotion (STORE→ALERT) is sent and a Pass-2 demotion (ALERT→STORE) is not.
+    if (recommendedAction === 'ALERT' && alertRow) {
+        await deps.sendAlert(alertRow);
     }
 
     summary.byRecommendedAction[recommendedAction]++;

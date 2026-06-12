@@ -66,7 +66,16 @@ const EXTRACTED: ExtractedOpportunity[] = [
         type: 'JOB', title: 'Senior Engineer TypeScript AI', company: 'Acme',
         description: 'Remote position', location: 'Remote', sourceUrl: 'https://example.com/job1',
         reasons: ['extracted reason'], concerns: [], strategicCategory: 'STRATEGIC_FIT',
-        strategicAnalysis: EMPTY_STRATEGIC_ANALYSIS,
+        // Populated Pass-1 block scoring sub-threshold strategically (64) despite the high
+        // Fit Score (85): proves routing follows the Strategic Score, not the Fit Score.
+        // Pass 2 overwrites these with the deeper block below.
+        strategicAnalysis: {
+            consultancyAlignment: 70, deliveryVisibility: 60, commercialProximity: 55,
+            buyerEnvironmentFit: 50, seniorityScope: 65,
+            resourceAdminTrapRisk: 'LOW', seoComfortZoneRisk: 'LOW',
+            realRoleInterpretation: 'Shallow first pass.', consultancyRelevance: 'Some.',
+            strategicReasons: ['shallow'], strategicConcerns: [], recommendedScreeningQuestions: [],
+        },
     },
     { type: 'NOISE', title: 'Newsletter', description: 'unrelated', reasons: [], concerns: [], strategicCategory: null, strategicAnalysis: EMPTY_STRATEGIC_ANALYSIS },
     {
@@ -143,8 +152,9 @@ describe('runIngestion (fake-backed pipeline)', () => {
         expect(summary.deepAnalyzed).toBe(1);       // and it has a sourceUrl, so Pass 2 runs
         expect(summary.created).toBe(3);            // high + mid + low; NOISE is not persisted
         expect(summary.updated).toBe(0);
-        // Live null-category fallback: ≥80 → ALERT, else STORE. No DIGEST/SUPPRESS until #7b.
-        expect(summary.byRecommendedAction).toEqual({ ALERT: 1, DIGEST: 0, STORE: 2, SUPPRESS: 0 });
+        // Routing now follows the Strategic Score (#4): all three rows score < 80
+        // strategically, so all STORE — even the 85-Fit row. No DIGEST/SUPPRESS until #7b.
+        expect(summary.byRecommendedAction).toEqual({ ALERT: 0, DIGEST: 0, STORE: 3, SUPPRESS: 0 });
         expect(summary.errors).toEqual([]);
 
         // Persisted rows: NOISE never lands; the three jobs do, at their routed action.
@@ -153,12 +163,14 @@ describe('runIngestion (fake-backed pipeline)', () => {
         const mid = rows.get('gmail://msgA#2');
         const low = rows.get('gmail://msgA#3');
 
-        expect(high?.recommendedAction).toBe('ALERT');
+        // High Fit (85) but sub-threshold Strategic (66) → STORE, NOT ALERT: the #4 fix
+        // means the Fit Score no longer floats a role to the top of the dashboard.
+        expect(high?.recommendedAction).toBe('STORE');
         expect(high?.fitScore).toBe(85);
         expect(high?.description).toBe(SCRAPED_DESCRIPTION); // Pass 2 replaced the body
         expect(high?.strategicCategory).toBe('STRATEGIC_FIT'); // persisted from analysis (#2)
 
-        expect(mid?.recommendedAction).toBe('STORE');        // 60 < 80 → STORE (was DISMISSED-hidden)
+        expect(mid?.recommendedAction).toBe('STORE');        // strategic 33 < 80 → STORE
         expect(mid?.fitScore).toBe(60);
         expect(mid?.strategicCategory).toBe('USEFUL_BRIDGE');
 
@@ -180,12 +192,157 @@ describe('runIngestion (fake-backed pipeline)', () => {
         expect(low?.consultancyAlignment).toBeNull();
         expect(low?.practicalFit).toBe(20);
 
+        // Strategic Score (#4) is computed from the persisted block and is the ranking
+        // authority — distinct from the Fit Score above. High ran Pass 2 (deep block):
+        // weighted 76.25 − 10 (SEO MEDIUM) = 66. Mid (Pass-1 block): 47.75 − 15 (trap
+        // MEDIUM) = 33. Low was never strategically analysed (EMPTY block) — only its
+        // Fit-sourced practicalFit is present, which never fabricates a headline → null.
+        expect(high?.strategicScore).toBe(66);
+        expect(mid?.strategicScore).toBe(33);
+        expect(low?.strategicScore).toBeNull();
+
         // Ingestion no longer writes status — it is purely the user's lifecycle field now.
         expect(high?.status).toBeUndefined();
 
-        // Exactly one immediate alert, for the 85-fit job (recommendedAction === 'ALERT').
+        // No immediate alert fires: no row clears the Strategic Score threshold, so the
+        // high Fit Score alone no longer triggers one (the #4 / P1 fix).
+        expect(alerted).toHaveLength(0);
+    });
+
+    it('alerts on a strong Strategic Score even when the Fit Score is low (#4)', async () => {
+        // The mirror of the regression above: a role whose Strategic Score clears the
+        // threshold ALERTs even though its Fit Score (neutral body → 50) does not —
+        // proving ALERT is driven by the Strategic Score, not the Fit Score.
+        const standout: ExtractedOpportunity = {
+            type: 'JOB', title: 'Consultancy Delivery Lead', company: 'Delta',
+            description: 'A senior role', sourceUrl: null, reasons: [], concerns: [], strategicCategory: null,
+            strategicAnalysis: {
+                consultancyAlignment: 95, deliveryVisibility: 95, commercialProximity: 95,
+                buyerEnvironmentFit: 95, seniorityScope: 95,
+                resourceAdminTrapRisk: 'LOW', seoComfortZoneRisk: 'LOW',
+                realRoleInterpretation: 'A standout strategic fit.', consultancyRelevance: 'Direct.',
+                strategicReasons: ['owns delivery'], strategicConcerns: [], recommendedScreeningQuestions: [],
+            },
+        };
+        const alerted: OpportunityRow[] = [];
+        const { adapter: persist, rows } = makePersistDouble();
+        const deps: IngestionDeps = {
+            ...defaultDeps,
+            persist,
+            intake: { fetchSources: async () => [SOURCES[0]!] },
+            extraction: { extract: async () => [standout] },
+            costGate: { digestAlreadyExtracted: async () => false, deepAlreadyDone: () => false },
+            sendAlert: async (row) => { alerted.push(row); },
+            loadPreferences: async () => ({ keywords: ['engineer'], locations: [], locationWeights: {} }),
+        };
+
+        await runIngestion({}, deps);
+
+        const row = rows.get('gmail://msgA#0');
+        expect(row?.fitScore).toBe(50);                              // neutral → midpoint, below threshold
+        expect(row?.strategicScore).toBeGreaterThanOrEqual(80);      // strong components → clears it
+        expect(row?.recommendedAction).toBe('ALERT');
         expect(alerted).toHaveLength(1);
-        expect(alerted[0]?.canonicalUrl).toBe('gmail://msgA#0');
+    });
+
+    it('sends the alert when Pass 2 promotes a row from STORE to ALERT (#4)', async () => {
+        // Pass 1 scores sub-threshold (STORE, no alert), but the Fit Score (65) clears the
+        // pre-filter so Pass 2 runs; the deeper block scores ≥80 and promotes the row to
+        // ALERT. The immediate alert must fire on that final decision — not be skipped
+        // because Pass 1 was STORE.
+        const promoteExtracted: ExtractedOpportunity = {
+            type: 'JOB', title: 'Engineer', company: 'Promo',
+            description: 'A role', location: 'Remote', sourceUrl: 'https://example.com/promote',
+            reasons: [], concerns: [], strategicCategory: null,
+            strategicAnalysis: {
+                consultancyAlignment: 60, deliveryVisibility: 55, commercialProximity: 50,
+                buyerEnvironmentFit: 50, seniorityScope: 55,
+                resourceAdminTrapRisk: 'LOW', seoComfortZoneRisk: 'LOW',
+                realRoleInterpretation: 'shallow', consultancyRelevance: 'some',
+                strategicReasons: [], strategicConcerns: [], recommendedScreeningQuestions: [],
+            },
+        };
+        const promoteFinal: AIAnalysisResult = {
+            type: 'JOB', title: 'Engineer', company: 'Promo',
+            industry: '', location: 'Remote', remoteStatus: 'REMOTE', description: SCRAPED_DESCRIPTION,
+            reasons: ['deep'], concerns: [], strategicCategory: null,
+            strategicAnalysis: {
+                consultancyAlignment: 95, deliveryVisibility: 95, commercialProximity: 95,
+                buyerEnvironmentFit: 95, seniorityScope: 95,
+                resourceAdminTrapRisk: 'LOW', seoComfortZoneRisk: 'LOW',
+                realRoleInterpretation: 'deep', consultancyRelevance: 'strong',
+                strategicReasons: [], strategicConcerns: [], recommendedScreeningQuestions: [],
+            },
+        };
+        const alerted: OpportunityRow[] = [];
+        const { adapter: persist, rows } = makePersistDouble();
+        const deps: IngestionDeps = {
+            ...defaultDeps,
+            persist,
+            intake: { fetchSources: async () => [SOURCES[0]!] },
+            extraction: { extract: async () => [promoteExtracted] },
+            deepScrape: { scrape: async (url): Promise<ScrapedContent> => ({ title: 't', description: SCRAPED_DESCRIPTION, url }) },
+            strategicAnalysis: { analyze: async () => [promoteFinal] },
+            costGate: { digestAlreadyExtracted: async () => false, deepAlreadyDone: () => false },
+            sendAlert: async (row) => { alerted.push(row); },
+            loadPreferences: async () => ({ keywords: ['engineer'], locations: ['remote'], locationWeights: {} }),
+        };
+
+        const summary = await runIngestion({}, deps);
+
+        const row = rows.get('gmail://msgA#0');
+        expect(summary.deepAnalyzed).toBe(1);                   // Pass 2 ran
+        expect(row?.recommendedAction).toBe('ALERT');           // promoted by the deep block
+        expect(row?.strategicScore).toBeGreaterThanOrEqual(80);
+        expect(alerted).toHaveLength(1);                        // …and the user was notified
+        expect(alerted[0]?.strategicScore).toBe(row?.strategicScore); // alert carries the Pass-2 state
+    });
+
+    it('still alerts on the Pass-1 decision when the Pass-2 deep scrape fails (#4)', async () => {
+        // A row that already routes to ALERT on Pass 1 (strong Pass-1 block) and clears the
+        // pre-filter (Fit 65 > 60) so Pass 2 runs — but the deep scrape throws. The optional
+        // enrichment failure must NOT swallow the Pass-1 alert: the row is already persisted
+        // as ALERT, so the notification must still fire and the failure be recorded.
+        const alertExtracted: ExtractedOpportunity = {
+            type: 'JOB', title: 'Engineer', company: 'Flaky',
+            description: 'A role', location: 'Remote', sourceUrl: 'https://example.com/flaky',
+            reasons: [], concerns: [], strategicCategory: null,
+            strategicAnalysis: {
+                consultancyAlignment: 95, deliveryVisibility: 95, commercialProximity: 95,
+                buyerEnvironmentFit: 95, seniorityScope: 95,
+                resourceAdminTrapRisk: 'LOW', seoComfortZoneRisk: 'LOW',
+                realRoleInterpretation: 'strong', consultancyRelevance: 'direct',
+                strategicReasons: [], strategicConcerns: [], recommendedScreeningQuestions: [],
+            },
+        };
+        const alerted: OpportunityRow[] = [];
+        const { adapter: persist, rows } = makePersistDouble();
+        const deps: IngestionDeps = {
+            ...defaultDeps,
+            persist,
+            intake: { fetchSources: async () => [SOURCES[0]!] },
+            extraction: { extract: async () => [alertExtracted] },
+            deepScrape: { scrape: async () => { throw new Error('boom: scrape timed out'); } },
+            costGate: { digestAlreadyExtracted: async () => false, deepAlreadyDone: () => false },
+            sendAlert: async (row) => { alerted.push(row); },
+            loadPreferences: async () => ({ keywords: ['engineer'], locations: ['remote'], locationWeights: {} }),
+        };
+
+        const summary = await runIngestion({}, deps);
+
+        const row = rows.get('gmail://msgA#0');
+        expect(row?.recommendedAction).toBe('ALERT');                // Pass-1 decision persisted
+        expect(row?.strategicScore).toBeGreaterThanOrEqual(80);
+        expect(summary.deepAnalyzed).toBe(0);                        // Pass 2 never completed
+        // The deep-pass failure is recorded, scoped to the opportunity's canonical URL...
+        expect(summary.errors).toHaveLength(1);
+        expect(summary.errors[0]?.stage).toBe('deepScrape');
+        expect(summary.errors[0]?.canonicalUrl).toBe('gmail://msgA#0');
+        expect(summary.errors[0]?.message).toContain('boom');
+        // ...and the Pass-1 ALERT still notifies and tallies — not swallowed by the failure.
+        expect(alerted).toHaveLength(1);
+        expect(alerted[0]?.strategicScore).toBe(row?.strategicScore); // carries the Pass-1 state
+        expect(summary.byRecommendedAction.ALERT).toBe(1);
     });
 
     it('isolates a poison source: records the failure and continues the run', async () => {

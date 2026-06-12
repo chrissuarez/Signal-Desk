@@ -353,10 +353,19 @@ export default function Dashboard() {
                       </div>
                     </div>
                     <div className="flex flex-col items-end">
-                      <span className={`px-3 py-1 rounded-full text-sm font-bold ${opp.fitScore >= 80 ? 'bg-green-600' : opp.fitScore >= 60 ? 'bg-yellow-600' : 'bg-gray-600'
-                        }`}>
-                        Score: {opp.fitScore}
-                      </span>
+                      {/* Strategic Score (#4) is the headline ranking authority; the Fit
+                          Score is demoted to a secondary line. Un-scored rows show a dash. */}
+                      {opp.strategicScore !== null ? (
+                        <span className={`px-3 py-1 rounded-full text-sm font-bold ${opp.strategicScore >= 80 ? 'bg-green-600' : opp.strategicScore >= 60 ? 'bg-yellow-600' : 'bg-gray-600'
+                          }`}>
+                          Strategic: {opp.strategicScore}
+                        </span>
+                      ) : (
+                        <span className="px-3 py-1 rounded-full text-sm font-bold bg-gray-700 text-gray-400">
+                          Strategic: —
+                        </span>
+                      )}
+                      <span className="text-xs text-gray-500 mt-1">Fit: {opp.fitScore}</span>
                       <span className="text-xs text-gray-500 mt-1 uppercase tracking-wider">{opp.status}</span>
                     </div>
                   </div>

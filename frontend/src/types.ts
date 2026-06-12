@@ -29,6 +29,9 @@ export interface Opportunity {
     reasons: string[] | null;
     concerns: string[] | null;
     strategicCategory: StrategicCategory | null;
+    // The headline Strategic Score (#4): the ranking authority the list is ordered by.
+    // Null until an Opportunity has been scored.
+    strategicScore: number | null;
     // Strategic Analysis fields (#3), returned by GET /opportunities. Null until analysed.
     consultancyAlignment: number | null;
     deliveryVisibility: number | null;
