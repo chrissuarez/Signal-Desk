@@ -2,6 +2,14 @@ export type OpportunityType = 'JOB' | 'BUSINESS' | 'NOISE';
 export type SourceType = 'EMAIL' | 'RSS' | 'WEB';
 export type ConfidenceType = 'LOW' | 'MEDIUM' | 'HIGH';
 export type OpportunityStatus = 'NEW' | 'SENT' | 'SAVED' | 'DISMISSED' | 'APPLIED';
+export type StrategicCategory =
+    | 'STRATEGIC_FIT'
+    | 'USEFUL_BRIDGE'
+    | 'SEO_COMFORT_ZONE'
+    | 'RESOURCE_ADMIN_TRAP'
+    | 'GENERIC_OPS_UNCLEAR'
+    | 'REJECT';
+export type RiskLevel = 'LOW' | 'MEDIUM' | 'HIGH';
 
 export interface Opportunity {
     id: number;
@@ -20,5 +28,20 @@ export interface Opportunity {
     confidence: ConfidenceType;
     reasons: string[] | null;
     concerns: string[] | null;
+    strategicCategory: StrategicCategory | null;
+    // Strategic Analysis fields (#3), returned by GET /opportunities. Null until analysed.
+    consultancyAlignment: number | null;
+    deliveryVisibility: number | null;
+    commercialProximity: number | null;
+    buyerEnvironmentFit: number | null;
+    seniorityScope: number | null;
+    practicalFit: number | null;
+    resourceAdminTrapRisk: RiskLevel | null;
+    seoComfortZoneRisk: RiskLevel | null;
+    realRoleInterpretation: string | null;
+    consultancyRelevance: string | null;
+    strategicReasons: string[] | null;
+    strategicConcerns: string[] | null;
+    recommendedScreeningQuestions: string[] | null;
     status: OpportunityStatus;
 }

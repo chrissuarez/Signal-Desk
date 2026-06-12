@@ -1,0 +1,1 @@
+ALTER TYPE "public"."recommended_action" ADD VALUE 'SUPPRESS';
