@@ -12,7 +12,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { runIngestion, defaultDeps, type IngestionDeps } from './ingestionService.js';
+import { runIngestion, defaultDeps, mergeGuardrailSettings, type IngestionDeps } from './ingestionService.js';
 import type { PersistAdapter, OpportunityRow, OpportunityInsert } from './ingestion/persist.js';
 import type { ExtractedOpportunity, RawSource } from './ingestion/types.js';
 import type { ScrapedContent } from './scraperService.js';
@@ -454,5 +454,78 @@ describe('runIngestion (fake-backed pipeline)', () => {
         expect(summary.sourcesSeen).toBe(2);
         expect(summary.created).toBe(1);
         expect(rows.get('gmail://good#0')?.title).toBe('Engineer Position');
+    });
+
+    it('keeps the excluded-industry veto through Pass 2 when the deep analysis omits industry (#5)', async () => {
+        // Pass 1 vetoes on the excluded industry, but the Fit Score clears the pre-filter so
+        // Pass 2 runs. The deep analyzer drops the industry (''), so without the Pass-1 fallback
+        // the deep re-score would un-veto the row and persist/route a high score for an excluded
+        // industry. The veto must survive enrichment: score 0, REJECT, STORE.
+        const excludedExtracted: ExtractedOpportunity = {
+            type: 'JOB', title: 'Engineer', company: 'BetCo', industry: 'Online Gambling',
+            description: 'A role', sourceUrl: 'https://example.com/x', reasons: [], concerns: [], strategicCategory: 'STRATEGIC_FIT',
+            strategicAnalysis: {
+                consultancyAlignment: 80, deliveryVisibility: 80, commercialProximity: 80,
+                buyerEnvironmentFit: 80, seniorityScope: 80,
+                resourceAdminTrapRisk: 'LOW', seoComfortZoneRisk: 'LOW',
+                realRoleInterpretation: 'Strong on paper.', consultancyRelevance: 'But excluded industry.',
+                strategicReasons: [], strategicConcerns: [], recommendedScreeningQuestions: [],
+            },
+        };
+        const strongDeepNoIndustry: AIAnalysisResult = {
+            type: 'JOB', title: 'Engineer', company: 'BetCo',
+            industry: '', location: 'Remote', remoteStatus: 'REMOTE', description: SCRAPED_DESCRIPTION,
+            reasons: ['deep'], concerns: [], strategicCategory: 'STRATEGIC_FIT',
+            strategicAnalysis: {
+                consultancyAlignment: 95, deliveryVisibility: 95, commercialProximity: 95,
+                buyerEnvironmentFit: 95, seniorityScope: 95,
+                resourceAdminTrapRisk: 'LOW', seoComfortZoneRisk: 'LOW',
+                realRoleInterpretation: 'deep', consultancyRelevance: 'strong',
+                strategicReasons: [], strategicConcerns: [], recommendedScreeningQuestions: [],
+            },
+        };
+        const { adapter: persist, rows } = makePersistDouble();
+        const deps: IngestionDeps = {
+            ...defaultDeps, persist,
+            intake: { fetchSources: async () => [SOURCES[0]!] },
+            extraction: { extract: async () => [excludedExtracted] },
+            preFilter: () => true, // force Pass 2 regardless of Fit Score
+            deepScrape: { scrape: async (url): Promise<ScrapedContent> => ({ title: 't', description: SCRAPED_DESCRIPTION, url }) },
+            strategicAnalysis: { analyze: async () => [strongDeepNoIndustry] },
+            costGate: { digestAlreadyExtracted: async () => false, deepAlreadyDone: () => false },
+            sendAlert: async () => {},
+            loadGuardrails: async () => DEFAULT_GUARDRAILS,
+            loadPreferences: async () => ({ keywords: [], locations: [] }),
+        };
+
+        const summary = await runIngestion({}, deps);
+
+        const row = rows.get('gmail://msgA#0');
+        expect(summary.deepAnalyzed).toBe(1);           // Pass 2 actually ran...
+        expect(row?.strategicScore).toBe(0);            // ...but the veto held: score still 0
+        expect(row?.strategicCategory).toBe('REJECT');  // ...and the category stays REJECT
+        expect(row?.recommendedAction).toBe('STORE');   // score 0 → never an alert
+        expect(row?.concerns?.some((c) => c.includes('Gambling'))).toBe(true);
+    });
+});
+
+describe('mergeGuardrailSettings (#5)', () => {
+    it('fills missing lists from defaults on a partial stored object', () => {
+        const merged = mergeGuardrailSettings({ excludedIndustries: ['Crypto'] });
+        expect(merged.excludedIndustries).toEqual(['Crypto']);                       // honoured
+        expect(merged.penaltyKeywords).toEqual(DEFAULT_GUARDRAILS.penaltyKeywords);  // filled
+        expect(merged.tier1Keywords).toEqual(DEFAULT_GUARDRAILS.tier1Keywords);      // filled
+    });
+
+    it('coerces non-array / null / undefined values to defaults so guardrails never crash', () => {
+        const merged = mergeGuardrailSettings({ excludedIndustries: 'oops', penaltyKeywords: null });
+        expect(merged.excludedIndustries).toEqual(DEFAULT_GUARDRAILS.excludedIndustries);
+        expect(merged.penaltyKeywords).toEqual(DEFAULT_GUARDRAILS.penaltyKeywords);
+        expect(mergeGuardrailSettings(undefined)).toEqual(DEFAULT_GUARDRAILS);
+    });
+
+    it('passes a complete stored object through unchanged', () => {
+        const full = { excludedIndustries: ['A'], penaltyKeywords: ['b'], tier1Keywords: ['c'] };
+        expect(mergeGuardrailSettings(full)).toEqual(full);
     });
 });

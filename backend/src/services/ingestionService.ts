@@ -68,12 +68,35 @@ const dbLoadPreferences = async (): Promise<IngestionPreferences> => {
     return (prefsRecord?.value as IngestionPreferences) || DEFAULT_PREFERENCES;
 };
 
-/** Production Guardrail-inputs loader: the `strategic_guardrails` settings row, with a fallback. */
+/**
+ * Merge a (possibly partial) stored guardrails object with `DEFAULT_GUARDRAILS`. Pure. Each
+ * list is filled independently — a partial update through the generic settings API (a row that
+ * omits one of the three arrays, or stores a non-array) must not leave a list `undefined`, or
+ * `applyScoreGuardrails` would later call `.find`/`includesAny` on it and the whole opportunity
+ * would throw. Validating per-list (not truthy-casting the whole object) is what keeps the
+ * veto/cap/floor live under partial settings.
+ */
+export const mergeGuardrailSettings = (stored: unknown): GuardrailSettings => {
+    const s = (stored ?? {}) as Partial<GuardrailSettings>;
+    return {
+        excludedIndustries: Array.isArray(s.excludedIndustries)
+            ? s.excludedIndustries
+            : DEFAULT_GUARDRAILS.excludedIndustries,
+        penaltyKeywords: Array.isArray(s.penaltyKeywords)
+            ? s.penaltyKeywords
+            : DEFAULT_GUARDRAILS.penaltyKeywords,
+        tier1Keywords: Array.isArray(s.tier1Keywords)
+            ? s.tier1Keywords
+            : DEFAULT_GUARDRAILS.tier1Keywords,
+    };
+};
+
+/** Production Guardrail-inputs loader: the `strategic_guardrails` settings row, merged with defaults. */
 const dbLoadGuardrails = async (): Promise<GuardrailSettings> => {
     const record = await db.query.settings.findFirst({
         where: eq(settings.key, 'strategic_guardrails'),
     });
-    return (record?.value as GuardrailSettings) || DEFAULT_GUARDRAILS;
+    return mergeGuardrailSettings(record?.value);
 };
 
 /** The production wiring: real adapters behind every seam. */
@@ -151,7 +174,9 @@ const reconcileScoreAndCategory = (args: {
     guardrails: GuardrailSettings;
 }): { strategicScore: number | null; strategicCategory: StrategicCategory | null; guardrailConcerns: string[] } => {
     const guard = applyScoreGuardrails(
-        { score: args.strategicScore, industry: args.industry, title: args.title, description: args.description },
+        // `?? ''` so an absent industry isn't passed as an explicit `undefined` (rejected under
+        // exactOptionalPropertyTypes); the Guardrail treats '' as "no industry" (no veto) anyway.
+        { score: args.strategicScore, industry: args.industry ?? '', title: args.title, description: args.description },
         args.guardrails,
     );
     const strategicCategory =
@@ -302,12 +327,15 @@ const processOpportunity = async (
                             practicalFit: finalScored.fitScore,
                         };
                         const finalComputedScore = computeStrategicScore(finalStrategicFields);
-                        // #5: re-run Guardrails + reconciliation on the deeper analysis.
+                        // #5: re-run Guardrails + reconciliation on the deeper analysis. Fall back
+                        // to the Pass-1 industry when the deep analyzer omits/normalizes it away —
+                        // the persisted row still carries that industry, so a hard excluded-industry
+                        // veto must not silently disappear during enrichment.
                         const finalReconciled = reconcileScoreAndCategory({
                             strategicScore: finalComputedScore,
                             llmCategory: finalAnalysis.strategicCategory,
                             strategicFields: finalStrategicFields,
-                            industry: finalAnalysis.industry,
+                            industry: finalAnalysis.industry || analysis.industry,
                             title: finalAnalysis.title,
                             description: scraped.description,
                             guardrails,
