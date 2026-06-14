@@ -18,6 +18,7 @@ import type { ExtractedOpportunity, RawSource } from './ingestion/types.js';
 import type { ScrapedContent } from './scraperService.js';
 import type { AIAnalysisResult } from './aiService.js';
 import { EMPTY_STRATEGIC_ANALYSIS } from '../engine/strategicAnalysis.js';
+import { DEFAULT_GUARDRAILS } from '../engine/strategicGuardrails.js';
 
 /** Minimal in-memory Persist double: a Map keyed on canonicalUrl with auto-increment ids. */
 const makePersistDouble = () => {
@@ -128,6 +129,7 @@ const makeDeps = (alerted: OpportunityRow[]) => {
             deepAlreadyDone: () => false,
         },
         sendAlert: async (row) => { alerted.push(row); },
+        loadGuardrails: async () => DEFAULT_GUARDRAILS,
         loadPreferences: async () => ({
             keywords: ['engineer', 'typescript', 'ai'],
             locations: ['remote'],
@@ -168,7 +170,9 @@ describe('runIngestion (fake-backed pipeline)', () => {
         expect(high?.recommendedAction).toBe('STORE');
         expect(high?.fitScore).toBe(85);
         expect(high?.description).toBe(SCRAPED_DESCRIPTION); // Pass 2 replaced the body
-        expect(high?.strategicCategory).toBe('STRATEGIC_FIT'); // persisted from analysis (#2)
+        // The LLM labelled it STRATEGIC_FIT, but reconciliation (#5) demotes it: the deep
+        // Strategic Score is 66 (< 70), so it can't stand as a strategic fit → USEFUL_BRIDGE.
+        expect(high?.strategicCategory).toBe('USEFUL_BRIDGE');
 
         expect(mid?.recommendedAction).toBe('STORE');        // strategic 33 < 80 → STORE
         expect(mid?.fitScore).toBe(60);
@@ -233,6 +237,7 @@ describe('runIngestion (fake-backed pipeline)', () => {
             extraction: { extract: async () => [standout] },
             costGate: { digestAlreadyExtracted: async () => false, deepAlreadyDone: () => false },
             sendAlert: async (row) => { alerted.push(row); },
+            loadGuardrails: async () => DEFAULT_GUARDRAILS,
             loadPreferences: async () => ({ keywords: ['engineer'], locations: [], locationWeights: {} }),
         };
 
@@ -285,6 +290,7 @@ describe('runIngestion (fake-backed pipeline)', () => {
             strategicAnalysis: { analyze: async () => [promoteFinal] },
             costGate: { digestAlreadyExtracted: async () => false, deepAlreadyDone: () => false },
             sendAlert: async (row) => { alerted.push(row); },
+            loadGuardrails: async () => DEFAULT_GUARDRAILS,
             loadPreferences: async () => ({ keywords: ['engineer'], locations: ['remote'], locationWeights: {} }),
         };
 
@@ -325,6 +331,7 @@ describe('runIngestion (fake-backed pipeline)', () => {
             deepScrape: { scrape: async () => { throw new Error('boom: scrape timed out'); } },
             costGate: { digestAlreadyExtracted: async () => false, deepAlreadyDone: () => false },
             sendAlert: async (row) => { alerted.push(row); },
+            loadGuardrails: async () => DEFAULT_GUARDRAILS,
             loadPreferences: async () => ({ keywords: ['engineer'], locations: ['remote'], locationWeights: {} }),
         };
 
@@ -343,6 +350,70 @@ describe('runIngestion (fake-backed pipeline)', () => {
         expect(alerted).toHaveLength(1);
         expect(alerted[0]?.strategicScore).toBe(row?.strategicScore); // carries the Pass-1 state
         expect(summary.byRecommendedAction.ALERT).toBe(1);
+    });
+
+    it('forces RESOURCE_ADMIN_TRAP when trap risk is HIGH, overriding the LLM category (#5)', async () => {
+        // The LLM proposed STRATEGIC_FIT, but an unambiguous resource-admin signal (trap risk
+        // HIGH) forces the category regardless — reconciliation precedence 1.
+        const trapRow: ExtractedOpportunity = {
+            type: 'JOB', title: 'Engineering Manager', company: 'TrapCo',
+            description: 'A role', sourceUrl: null, reasons: [], concerns: [], strategicCategory: 'STRATEGIC_FIT',
+            strategicAnalysis: {
+                consultancyAlignment: 90, deliveryVisibility: 85, commercialProximity: 80,
+                buyerEnvironmentFit: 80, seniorityScope: 85,
+                resourceAdminTrapRisk: 'HIGH', seoComfortZoneRisk: 'LOW',
+                realRoleInterpretation: 'Strong on paper but an admin trap.', consultancyRelevance: 'Low.',
+                strategicReasons: [], strategicConcerns: [], recommendedScreeningQuestions: [],
+            },
+        };
+        const { adapter: persist, rows } = makePersistDouble();
+        const deps: IngestionDeps = {
+            ...defaultDeps, persist,
+            intake: { fetchSources: async () => [SOURCES[0]!] },
+            extraction: { extract: async () => [trapRow] },
+            costGate: { digestAlreadyExtracted: async () => false, deepAlreadyDone: () => false },
+            sendAlert: async () => {},
+            loadGuardrails: async () => DEFAULT_GUARDRAILS,
+            loadPreferences: async () => ({ keywords: [], locations: [] }),
+        };
+
+        await runIngestion({}, deps);
+
+        expect(rows.get('gmail://msgA#0')?.strategicCategory).toBe('RESOURCE_ADMIN_TRAP');
+    });
+
+    it('vetoes an excluded industry: caps the Strategic Score to 0 and forces REJECT (#5)', async () => {
+        // A strong-looking role in an excluded industry: the deterministic Guardrail veto
+        // overrides the number and the LLM category — score capped to 0, category REJECT.
+        const excludedRow: ExtractedOpportunity = {
+            type: 'JOB', title: 'Engineer', company: 'BetCo', industry: 'Online Gambling',
+            description: 'A role', sourceUrl: null, reasons: [], concerns: [], strategicCategory: 'STRATEGIC_FIT',
+            strategicAnalysis: {
+                consultancyAlignment: 80, deliveryVisibility: 80, commercialProximity: 80,
+                buyerEnvironmentFit: 80, seniorityScope: 80,
+                resourceAdminTrapRisk: 'LOW', seoComfortZoneRisk: 'LOW',
+                realRoleInterpretation: 'Strong on paper.', consultancyRelevance: 'But excluded industry.',
+                strategicReasons: [], strategicConcerns: [], recommendedScreeningQuestions: [],
+            },
+        };
+        const { adapter: persist, rows } = makePersistDouble();
+        const deps: IngestionDeps = {
+            ...defaultDeps, persist,
+            intake: { fetchSources: async () => [SOURCES[0]!] },
+            extraction: { extract: async () => [excludedRow] },
+            costGate: { digestAlreadyExtracted: async () => false, deepAlreadyDone: () => false },
+            sendAlert: async () => {},
+            loadGuardrails: async () => DEFAULT_GUARDRAILS,
+            loadPreferences: async () => ({ keywords: [], locations: [] }),
+        };
+
+        await runIngestion({}, deps);
+
+        const row = rows.get('gmail://msgA#0');
+        expect(row?.strategicScore).toBe(0);            // industry veto caps the score
+        expect(row?.strategicCategory).toBe('REJECT');  // …and forces REJECT
+        expect(row?.recommendedAction).toBe('STORE');   // score 0 → not an alert
+        expect(row?.concerns?.some((c) => c.includes('Gambling'))).toBe(true);
     });
 
     it('isolates a poison source: records the failure and continues the run', async () => {
@@ -367,6 +438,7 @@ describe('runIngestion (fake-backed pipeline)', () => {
             },
             costGate: { digestAlreadyExtracted: async () => false, deepAlreadyDone: () => false },
             sendAlert: async () => {},
+            loadGuardrails: async () => DEFAULT_GUARDRAILS,
             loadPreferences: async () => ({ keywords: ['engineer'], locations: [] }),
         };
 
