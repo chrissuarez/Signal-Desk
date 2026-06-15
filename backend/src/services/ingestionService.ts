@@ -22,7 +22,7 @@ import { settings } from '../db/schema.js';
 import { eq } from 'drizzle-orm';
 import { dbPersist, type PersistAdapter, type OpportunityRow } from './ingestion/persist.js';
 import { gmailIntake, type IntakeAdapter } from './ingestion/intake.js';
-import { defaultExtraction, type ExtractionAdapter } from './ingestion/extraction.js';
+import { defaultExtraction, isHeuristicFallback, type ExtractionAdapter } from './ingestion/extraction.js';
 import { httpDeepScrape, type DeepScrapeAdapter } from './ingestion/deepScrape.js';
 import { aiStrategicAnalysis, type StrategicAnalysisAdapter } from './ingestion/strategicAnalysis.js';
 import { dbCostGate, type CostGate } from './ingestion/costGate.js';
@@ -574,7 +574,14 @@ export const runIngestion = async (
             // re-extracts to recover the missing opportunities, instead of the old #0-proxy
             // skipping a partially-written digest forever. A clean all-NOISE digest (no
             // opportunities, no errors) is still marked, so newsletters aren't re-extracted.
-            if (summary.errors.length === errorsBeforeDigest) {
+            //
+            // The marker means "a genuine AI extraction finished", so a degraded no-key
+            // heuristic run never sets it (#12, Codex P2): that path returns at most one row
+            // regardless of how many opportunities the digest holds and skips the LLM entirely,
+            // so marking it would lose the rest of the digest and skip it forever once a key
+            // exists. Leaving it unmarked re-runs the (free) heuristic each time and lets a
+            // later AI run extract the digest properly.
+            if (summary.errors.length === errorsBeforeDigest && !isHeuristicFallback(analysisResults)) {
                 await deps.costGate.markDigestExtracted(source.messageId);
             }
         } catch (error) {

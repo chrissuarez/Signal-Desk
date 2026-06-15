@@ -15,6 +15,7 @@ import { describe, it, expect } from 'vitest';
 import { runIngestion, defaultDeps, mergeGuardrailSettings, type IngestionDeps } from './ingestionService.js';
 import type { PersistAdapter, OpportunityRow, OpportunityInsert } from './ingestion/persist.js';
 import type { ExtractedOpportunity, RawSource } from './ingestion/types.js';
+import { NO_API_KEY_CONCERN } from './ingestion/extraction.js';
 import type { ScrapedContent } from './scraperService.js';
 import type { AIAnalysisResult } from './aiService.js';
 import { EMPTY_STRATEGIC_ANALYSIS } from '../engine/strategicAnalysis.js';
@@ -860,6 +861,53 @@ describe('runIngestion (fake-backed pipeline)', () => {
         expect(second.costSkipped).toBe(0);       // not skipped: failure was retried
         expect(rows.get('gmail://msgA#0')?.title).toBe('Engineer');
         expect(marked.has('msgA')).toBe(true);    // now clean → marked
+    });
+
+    it('does not mark a no-key heuristic-fallback digest, so a later AI run re-extracts it (#12, Codex P2)', async () => {
+        // Without GEMINI_API_KEY, defaultExtraction returns a single heuristic row carrying
+        // NO_API_KEY_CONCERN — at most one row no matter how many opportunities the digest holds,
+        // and no LLM ran. Marking it "fully extracted" would lose the rest of the digest (and any
+        // NOISE-classified body persists nothing) and skip it forever once a key is added. So a
+        // degraded fallback digest must stay UNMARKED: the next run re-extracts (with AI once keyed).
+        const marked = new Set<string>();
+        const { adapter: persist, rows } = makePersistDouble();
+        const fallbackNoise: ExtractedOpportunity = {
+            type: 'NOISE', title: 'Job Alerts', company: 'Unknown', description: 'digest body',
+            sourceUrl: null, reasons: [], concerns: [NO_API_KEY_CONCERN], strategicCategory: null,
+            strategicAnalysis: EMPTY_STRATEGIC_ANALYSIS,
+        };
+        const realJob: ExtractedOpportunity = {
+            type: 'JOB', title: 'Engineer', company: 'Acme', description: 'A role',
+            sourceUrl: null, reasons: [], concerns: [], strategicCategory: null,
+            strategicAnalysis: EMPTY_STRATEGIC_ANALYSIS,
+        };
+        let keyed = false; // flips to the real AI extraction once a key is configured
+        const deps: IngestionDeps = {
+            ...defaultDeps, persist,
+            intake: { fetchSources: async () => [SOURCES[0]!] },
+            extraction: { extract: async () => (keyed ? [realJob] : [fallbackNoise]) },
+            costGate: {
+                digestAlreadyExtracted: async (id) => marked.has(id),
+                markDigestExtracted: async (id) => { marked.add(id); },
+                deepAlreadyDone: () => false,
+            },
+            sendAlert: async () => {},
+            loadGuardrails: async () => DEFAULT_GUARDRAILS,
+            loadPreferences: async () => ({ keywords: ['engineer'], locations: [] }),
+        };
+
+        // Run 1 (no key): heuristic NOISE persists nothing and the digest is left UNMARKED.
+        const first = await runIngestion({}, deps);
+        expect(first.errors.length).toBe(0);      // not an error — just degraded
+        expect(rows.size).toBe(0);
+        expect(marked.has('msgA')).toBe(false);   // degraded fallback → NOT marked
+
+        // Run 2 (key now set): not skipped → the real AI extraction recovers the opportunity.
+        keyed = true;
+        const second = await runIngestion({}, deps);
+        expect(second.costSkipped).toBe(0);       // not skipped: fallback never finalized it
+        expect(rows.get('gmail://msgA#0')?.title).toBe('Engineer');
+        expect(marked.has('msgA')).toBe(true);    // genuine AI extraction → now marked
     });
 });
 
