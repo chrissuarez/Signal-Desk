@@ -342,17 +342,18 @@ const processOpportunity = async (
                         };
                         const finalComputedScore = computeStrategicScore(finalStrategicFields);
                         // #5: re-run Guardrails + reconciliation on the deeper analysis. Veto on
-                        // BOTH the deep AND the Pass-1 industry, not deep-or-Pass-1 — a deep broad
-                        // label (e.g. "Other") must not shadow a Pass-1 excluded industry. The deep
-                        // update never overwrites the persisted `industry` (it stays the Pass-1
-                        // value), so a hard excluded-industry veto must not disappear in enrichment.
+                        // BOTH the deep AND the Pass-1 text/industry, not deep-or-Pass-1 — a deep
+                        // broad label ("Other") or a re-written generic title/description must not
+                        // shadow a Pass-1 veto term. The deep update never overwrites the persisted
+                        // industry/title (they stay the Pass-1 values), so a hard veto (whether the
+                        // term was in the industry, title, or description) must not disappear here.
                         const finalReconciled = reconcileScoreAndCategory({
                             strategicScore: finalComputedScore,
                             llmCategory: finalAnalysis.strategicCategory,
                             strategicFields: finalStrategicFields,
                             industry: [finalAnalysis.industry, analysis.industry].filter(Boolean).join(' '),
-                            title: finalAnalysis.title,
-                            description: scraped.description,
+                            title: [finalAnalysis.title, analysis.title].filter(Boolean).join(' '),
+                            description: [scraped.description, analysis.description].filter(Boolean).join(' '),
                             guardrails,
                         });
                         const finalStrategicScore = finalReconciled.strategicScore;

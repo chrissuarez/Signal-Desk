@@ -29,6 +29,13 @@ describe('reconciledToSignals', () => {
     expect(decideRecommendedAction(sig(0))).toBe('STORE');
   });
 
+  it('a null category with a HIGH risk flag does not alert on a high score (STOREs)', () => {
+    // The newly-live risk flags must reach routing even when the category is null — a high score
+    // alone must not bypass a HIGH SEO/trap risk through the score-only fallback.
+    const sig = reconciledToSignals({ strategicScore: 90, category: null, seoComfortZoneRisk: 'HIGH', resourceAdminTrapRisk: 'LOW' });
+    expect(decideRecommendedAction(sig)).toBe('STORE');
+  });
+
   it('lights up the category arms: a confirmed-bad category never alerts on a high score', () => {
     const highScoreBad = (category: 'RESOURCE_ADMIN_TRAP' | 'REJECT' | 'SEO_COMFORT_ZONE') =>
       reconciledToSignals({ strategicScore: 95, category, seoComfortZoneRisk: 'LOW', resourceAdminTrapRisk: 'LOW' });

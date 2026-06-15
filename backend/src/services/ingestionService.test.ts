@@ -565,6 +565,56 @@ describe('runIngestion (fake-backed pipeline)', () => {
         expect(row?.recommendedAction).toBe('SUPPRESS');
         expect(row?.concerns?.some((c) => c.includes('Gambling'))).toBe(true);
     });
+
+    it('keeps a Pass-1 title-based veto when the deep analysis returns a generic title (#5)', async () => {
+        // The veto term is in the TITLE (industry is a broad "Other"), and the deep re-analysis
+        // returns a generic title + clean scraped body. The persisted title stays the Pass-1
+        // value, so the veto must still fire from the carried-over Pass-1 title: score 0, REJECT.
+        const excludedByTitle: ExtractedOpportunity = {
+            type: 'JOB', title: 'Gambling Platform Engineer', company: 'BetCo', industry: 'Other',
+            description: 'A role', sourceUrl: 'https://example.com/x', reasons: [], concerns: [], strategicCategory: 'STRATEGIC_FIT',
+            strategicAnalysis: {
+                consultancyAlignment: 80, deliveryVisibility: 80, commercialProximity: 80,
+                buyerEnvironmentFit: 80, seniorityScope: 80,
+                resourceAdminTrapRisk: 'LOW', seoComfortZoneRisk: 'LOW',
+                realRoleInterpretation: 'Strong on paper.', consultancyRelevance: 'But excluded.',
+                strategicReasons: [], strategicConcerns: [], recommendedScreeningQuestions: [],
+            },
+        };
+        const cleanDeep: AIAnalysisResult = {
+            type: 'JOB', title: 'Platform Engineer', company: 'BetCo',
+            industry: 'Other', location: 'Remote', remoteStatus: 'REMOTE', description: SCRAPED_DESCRIPTION,
+            reasons: ['deep'], concerns: [], strategicCategory: 'STRATEGIC_FIT',
+            strategicAnalysis: {
+                consultancyAlignment: 95, deliveryVisibility: 95, commercialProximity: 95,
+                buyerEnvironmentFit: 95, seniorityScope: 95,
+                resourceAdminTrapRisk: 'LOW', seoComfortZoneRisk: 'LOW',
+                realRoleInterpretation: 'deep', consultancyRelevance: 'strong',
+                strategicReasons: [], strategicConcerns: [], recommendedScreeningQuestions: [],
+            },
+        };
+        const { adapter: persist, rows } = makePersistDouble();
+        const deps: IngestionDeps = {
+            ...defaultDeps, persist,
+            intake: { fetchSources: async () => [SOURCES[0]!] },
+            extraction: { extract: async () => [excludedByTitle] },
+            preFilter: () => true,
+            deepScrape: { scrape: async (url): Promise<ScrapedContent> => ({ title: 't', description: SCRAPED_DESCRIPTION, url }) },
+            strategicAnalysis: { analyze: async () => [cleanDeep] },
+            costGate: { digestAlreadyExtracted: async () => false, deepAlreadyDone: () => false },
+            sendAlert: async () => {},
+            loadGuardrails: async () => DEFAULT_GUARDRAILS,
+            loadPreferences: async () => ({ keywords: [], locations: [] }),
+        };
+
+        await runIngestion({}, deps);
+
+        const row = rows.get('gmail://msgA#0');
+        expect(row?.strategicScore).toBe(0);             // the Pass-1 title term still vetoes...
+        expect(row?.strategicCategory).toBe('REJECT');   // ...through enrichment
+        expect(row?.recommendedAction).toBe('SUPPRESS');
+        expect(row?.concerns?.some((c) => c.includes('Gambling'))).toBe(true);
+    });
 });
 
 describe('mergeGuardrailSettings (#5)', () => {

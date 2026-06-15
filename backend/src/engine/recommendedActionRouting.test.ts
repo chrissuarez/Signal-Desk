@@ -26,6 +26,13 @@ describe('decideRecommendedAction (ADR-0005 mapping)', () => {
       expect(decideRecommendedAction(signals({ strategicScore: 39 }))).toBe('STORE');
       expect(decideRecommendedAction(signals({ strategicScore: 0 }))).toBe('STORE');
     });
+
+    it('does NOT alert an un-categorised role when a risk flag is HIGH (stores instead)', () => {
+      // A null category with a HIGH SEO/trap risk must not ALERT on score alone — the score-only
+      // fallback honours the risk flags just like the category arms do.
+      expect(decideRecommendedAction(signals({ strategicScore: 90, seoComfortZoneRisk: 'HIGH' }))).toBe('STORE');
+      expect(decideRecommendedAction(signals({ strategicScore: 90, resourceAdminTrapRisk: 'HIGH' }))).toBe('STORE');
+    });
   });
 
   // The category arms below are DORMANT until the real category adapter lands (#7b),
