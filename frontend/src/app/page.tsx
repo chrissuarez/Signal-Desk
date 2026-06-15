@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { fetchOpportunities, triggerIngestion, submitFeedback, fetchSettings, updateSettings, API_BASE_URL } from '@/lib/api';
 import { Opportunity, StrategicCategory, RiskLevel } from '../types';
 import { getRefinedIndustryList } from '@/lib/industryUtils';
@@ -86,6 +86,13 @@ export default function Dashboard() {
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
 
   const [gmailStatus, setGmailStatus] = useState<{ connected: boolean, error?: string | null }>({ connected: false });
+  // Gate the first opportunity fetch until the tab has been adopted from the URL (below), so
+  // a deep-linked ?category= load never fires a throwaway unfiltered request first.
+  const [hydrated, setHydrated] = useState(false);
+  // Monotonic request token: only the most recently *started* load may write state, so a
+  // slower earlier response (deep-link mount, or rapid tab switches) can never clobber a
+  // newer one. (The fix for the #26 stale-response race.)
+  const loadSeq = useRef(0);
 
   // The server-side slice for the current tab. SAVED/CONFIG ride the default (empty) view;
   // SAVED narrows it client-side by status below.
@@ -94,13 +101,15 @@ export default function Dashboard() {
   const actionParam = serverFilter.action ?? '';
 
   const loadOpportunities = async (filter: { category?: string; action?: string }) => {
+    const seq = ++loadSeq.current;
     setLoading(true);
     try {
-      setOpportunities(await fetchOpportunities(filter));
+      const data = await fetchOpportunities(filter);
+      if (seq === loadSeq.current) setOpportunities(data); // drop superseded responses
     } catch (error) {
       console.error(error);
     } finally {
-      setLoading(false);
+      if (seq === loadSeq.current) setLoading(false);
     }
   };
 
@@ -127,16 +136,21 @@ export default function Dashboard() {
     }
   };
 
-  // On mount: adopt any tab encoded in the URL, then load settings once.
+  // On mount: adopt any tab encoded in the URL (before the first fetch can run), load
+  // settings once, and release the fetch gate. Batched, so the filter-effect below first
+  // runs with the URL-derived tab already in place — never the transient ALL default.
   useEffect(() => {
     setActiveTab(tabFromSearch(window.location.search));
+    setHydrated(true);
     loadSettings();
   }, []);
 
   // The opportunity list is purely a function of the active filter: reflect it in the URL
   // and (re)fetch whenever it changes. SAVED/CONFIG collapse to the empty filter, so this
-  // does not refetch when only the client-side view changes.
+  // does not refetch when only the client-side view changes. Held until `hydrated` so a
+  // deep-linked filter does not first fire (and render) an unfiltered request.
   useEffect(() => {
+    if (!hydrated) return;
     const p = new URLSearchParams();
     if (categoryParam) p.set('category', categoryParam);
     if (actionParam) p.set('action', actionParam);
@@ -144,7 +158,7 @@ export default function Dashboard() {
     window.history.replaceState(null, '', qs ? `?${qs}` : window.location.pathname);
     loadOpportunities({ category: categoryParam || undefined, action: actionParam || undefined });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [categoryParam, actionParam]);
+  }, [hydrated, categoryParam, actionParam]);
 
   const refreshOpportunities = () =>
     loadOpportunities({ category: categoryParam || undefined, action: actionParam || undefined });
