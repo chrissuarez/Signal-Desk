@@ -10,7 +10,7 @@
  */
 
 import { legacyScoreReconcile, type ScoreReconcile } from '../engine/scoreReconcile.js';
-import { legacyPreFilter, type StrategicPreFilter } from '../engine/strategicPreFilter.js';
+import { strategicPreFilter, type StrategicPreFilter } from '../engine/strategicPreFilter.js';
 import { decideRecommendedAction } from '../engine/recommendedActionRouting.js';
 import { computeStrategicScore } from '../engine/strategicScoring.js';
 import { applyScoreGuardrails, DEFAULT_GUARDRAILS, type GuardrailSettings } from '../engine/strategicGuardrails.js';
@@ -115,7 +115,7 @@ const dbLoadGuardrails = async (): Promise<GuardrailSettings> => {
 export const defaultDeps: IngestionDeps = {
     intake: gmailIntake,
     extraction: defaultExtraction,
-    preFilter: legacyPreFilter,
+    preFilter: strategicPreFilter,
     deepScrape: httpDeepScrape,
     strategicAnalysis: aiStrategicAnalysis,
     scoreReconcile: legacyScoreReconcile,
@@ -290,6 +290,9 @@ const processOpportunity = async (
         strategicCategory,
         ...strategicFields,
         strategicScore,
+        // #6 (ADR-0004): SHALLOW until a Pass-2 deep re-analysis upgrades it to DEEP below.
+        // Every persisted row records a depth so the dashboard can flag snippet-only judgments.
+        analysisDepth: 'SHALLOW',
         recommendedAction,
     }, {
         title: analysis.title,
@@ -305,6 +308,7 @@ const processOpportunity = async (
         strategicCategory,
         ...strategicFields,
         strategicScore,
+        analysisDepth: 'SHALLOW',
         recommendedAction,
         updatedAt: new Date(),
     });
@@ -316,8 +320,14 @@ const processOpportunity = async (
     // on the Pass-1 decision would miss promotions and fire premature alerts on demotions.
     let alertRow: OpportunityRow | undefined = insertedRow;
 
-    // PASS 2: Deep Scrape for high-potential jobs.
-    if (deps.preFilter({ fitScore: scored.fitScore })) {
+    // PASS 2 (ADR-0004): the Strategic Pre-filter — not the Fit Score — decides whether this
+    // role earns a deep scrape + full re-analysis. High recall: any Tier-1 keyword or target
+    // role-family title in the title/snippet passes, unless a hard-exclude industry vetoes. The
+    // gate reads the same configurable strategic_guardrails lists the score Guardrails use.
+    if (deps.preFilter(
+        { title: analysis.title, description: analysis.description },
+        { tier1Keywords: guardrails.tier1Keywords, excludedIndustries: guardrails.excludedIndustries },
+    )) {
         summary.preFilterPassed++;
         if (analysis.sourceUrl && !deps.costGate.deepAlreadyDone(existing)) {
             // Deep scrape + re-analysis is optional enrichment. A transient scrape/analysis
@@ -379,6 +389,8 @@ const processOpportunity = async (
                             strategicCategory: finalReconciled.strategicCategory,
                             ...finalStrategicFields,
                             strategicScore: finalStrategicScore,
+                            // #6: this role was re-judged on the full scraped description → DEEP.
+                            analysisDepth: 'DEEP' as const,
                             recommendedAction,
                             updatedAt: new Date(),
                         };

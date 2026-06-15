@@ -90,16 +90,3 @@ export const strategicPreFilter: StrategicPreFilter = (input, config) => {
   // High-recall pass: any Tier-1 strategic keyword OR target role-family title.
   return [...config.tier1Keywords, ...ROLE_FAMILY_TITLES].some((n) => matches(haystack, n));
 };
-
-// ---------------------------------------------------------------------------------------------
-// LEGACY (removed once the orchestrator is rewired to `strategicPreFilter`, same commit):
-// today's effective gate into Pass 2 (fitScore > 60). Kept transiently so this commit compiles
-// while the new pure logic is added; it is deliberately not a pass-through.
-
-export interface PreFilterSignals {
-  /** Today's relevance proxy: the computed Fit Score. */
-  fitScore: number;
-}
-
-/** Legacy Strategic Pre-filter: today's effective gate into Pass 2 (fitScore > 60). */
-export const legacyPreFilter = (signals: PreFilterSignals): boolean => signals.fitScore > 60;

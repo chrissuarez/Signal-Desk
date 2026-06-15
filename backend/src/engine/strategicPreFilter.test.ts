@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
   strategicPreFilter,
-  legacyPreFilter,
   ROLE_FAMILY_TITLES,
   type StrategicPreFilterConfig,
 } from './strategicPreFilter.js';
@@ -65,15 +64,5 @@ describe('strategicPreFilter (#6, ADR-0004)', () => {
     // Proves the gate no longer reads the Fit Score the way the legacy gate did.
     expect(strategicPreFilter({ title: 'SEO Lead', description: 'On-page SEO and link building.' }, CONFIG)).toBe(false);
     expect(strategicPreFilter({ title: 'Resource Management Lead', description: '' }, CONFIG)).toBe(true);
-  });
-});
-
-// Retained transiently until the orchestrator is rewired to strategicPreFilter (same commit).
-describe('legacyPreFilter (to be removed)', () => {
-  it('passes opportunities scoring above 60', () => {
-    expect(legacyPreFilter({ fitScore: 61 })).toBe(true);
-  });
-  it('rejects opportunities at or below the 60 threshold', () => {
-    expect(legacyPreFilter({ fitScore: 60 })).toBe(false);
   });
 });
