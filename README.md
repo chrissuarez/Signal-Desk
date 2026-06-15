@@ -78,9 +78,9 @@ npm run dev         # http://localhost:3000
    <http://localhost:4000/api/auth/google/login> (this kicks off the Google OAuth consent flow).
 2. **Label your emails.** Make sure your job-alert emails land under the `Job Alerts` Gmail
    label (or whatever you set `GMAIL_LABEL` to). Signal Desk only reads that label.
-3. **Sync.** Open the dashboard at <http://localhost:3000> and click **Sync** (the ingest
-   button). It pulls new emails, extracts Opportunities, and scores them. The backend also
-   syncs **automatically every 30 minutes** on its own.
+3. **Fetch new opportunities.** Open the dashboard at <http://localhost:3000> and click
+   **Fetch New Ops** (the ingest button). It pulls new emails, extracts Opportunities, and
+   scores them. The backend also syncs **automatically every 30 minutes** on its own.
 4. **Browse the ranked list.** Opportunities are sorted by Strategic Score, with `ALERT`
    rows floated to the top. Each card shows its category, score, reasons, and concerns.
 
