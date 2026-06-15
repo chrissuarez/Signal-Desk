@@ -10,6 +10,9 @@ export type StrategicCategory =
     | 'GENERIC_OPS_UNCLEAR'
     | 'REJECT';
 export type RiskLevel = 'LOW' | 'MEDIUM' | 'HIGH';
+// The system's routing decision (ADR-0005 / #13). The dashboard's strategic filter tabs
+// (#8) pass `?action=` to gather rows by routing — e.g. Needs Review includes DIGEST.
+export type RecommendedAction = 'ALERT' | 'DIGEST' | 'STORE' | 'SUPPRESS';
 // How rich the text the Strategic Analysis judged (#6): DEEP = re-analysed on the full
 // scraped job description; SHALLOW = the Pass-1 email snippet only. Null on legacy rows.
 export type AnalysisDepth = 'DEEP' | 'SHALLOW';
@@ -52,5 +55,7 @@ export interface Opportunity {
     strategicReasons: string[] | null;
     strategicConcerns: string[] | null;
     recommendedScreeningQuestions: string[] | null;
+    // The system's routing decision (#13). Null on un-routed legacy rows.
+    recommendedAction: RecommendedAction | null;
     status: OpportunityStatus;
 }

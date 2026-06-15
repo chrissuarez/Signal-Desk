@@ -1,7 +1,14 @@
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api';
 
-export const fetchOpportunities = async () => {
-    const res = await fetch(`${API_BASE_URL}/opportunities`, { credentials: 'include' });
+// The dashboard's strategic filter tabs (#8) pass `category`/`action` straight through to
+// the API as `?category=`/`?action=` (comma-separated). Omitted params fall back to the
+// server's default view (hides SUPPRESS); an explicit filter reveals those hidden rows.
+export const fetchOpportunities = async (filter?: { category?: string; action?: string }) => {
+    const params = new URLSearchParams();
+    if (filter?.category) params.set('category', filter.category);
+    if (filter?.action) params.set('action', filter.action);
+    const qs = params.toString();
+    const res = await fetch(`${API_BASE_URL}/opportunities${qs ? `?${qs}` : ''}`, { credentials: 'include' });
     if (!res.ok) throw new Error('Failed to fetch opportunities');
     return res.json();
 };
