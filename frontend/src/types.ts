@@ -10,6 +10,9 @@ export type StrategicCategory =
     | 'GENERIC_OPS_UNCLEAR'
     | 'REJECT';
 export type RiskLevel = 'LOW' | 'MEDIUM' | 'HIGH';
+// How rich the text the Strategic Analysis judged (#6): DEEP = re-analysed on the full
+// scraped job description; SHALLOW = the Pass-1 email snippet only. Null on legacy rows.
+export type AnalysisDepth = 'DEEP' | 'SHALLOW';
 
 export interface Opportunity {
     id: number;
@@ -32,6 +35,9 @@ export interface Opportunity {
     // The headline Strategic Score (#4): the ranking authority the list is ordered by.
     // Null until an Opportunity has been scored.
     strategicScore: number | null;
+    // Analysis depth (#6): whether the Strategic Analysis judged the full scraped job
+    // description (DEEP) or only the email snippet (SHALLOW). Null on un-analysed legacy rows.
+    analysisDepth: AnalysisDepth | null;
     // Strategic Analysis fields (#3), returned by GET /opportunities. Null until analysed.
     consultancyAlignment: number | null;
     deliveryVisibility: number | null;
