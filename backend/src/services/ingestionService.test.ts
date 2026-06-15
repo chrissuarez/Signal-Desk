@@ -963,6 +963,56 @@ describe('runIngestion (fake-backed pipeline)', () => {
         const third = await runIngestion({}, deps);
         expect(third.costSkipped).toBe(1);   // marker now skips the whole digest
     });
+
+    it('marks a digest whose Pass-1 persisted even though the Pass-2 deep scrape failed (#12, Codex P2)', async () => {
+        // Pass 1 extracts + persists the opportunity (ALERT, SHALLOW), then the deep scrape throws
+        // — recorded as a 'deepScrape' error. That Pass-2 enrichment failure must NOT block the
+        // completion marker: the row is already persisted (retryable via a forced reprocess), and a
+        // non-force re-extraction can't recover the deep data anyway (dedup returns before Pass 2),
+        // so leaving it unmarked would just burn one more extraction call every run.
+        const marked = new Set<string>();
+        const { adapter: persist, rows } = makePersistDouble();
+        const alertExtracted: ExtractedOpportunity = {
+            type: 'JOB', title: 'Engineer', company: 'Flaky',
+            description: 'A role', location: 'Remote', sourceUrl: 'https://example.com/flaky',
+            reasons: [], concerns: [], strategicCategory: null,
+            strategicAnalysis: {
+                consultancyAlignment: 95, deliveryVisibility: 95, commercialProximity: 95,
+                buyerEnvironmentFit: 95, seniorityScope: 95,
+                resourceAdminTrapRisk: 'LOW', seoComfortZoneRisk: 'LOW',
+                realRoleInterpretation: 'strong', consultancyRelevance: 'direct',
+                strategicReasons: [], strategicConcerns: [], recommendedScreeningQuestions: [],
+            },
+        };
+        let extractCalls = 0;
+        const deps: IngestionDeps = {
+            ...defaultDeps, persist,
+            intake: { fetchSources: async () => [SOURCES[0]!] },
+            extraction: { extract: async () => { extractCalls++; return [alertExtracted]; } },
+            preFilter: () => true, // force Pass 2 so the deep scrape is attempted
+            deepScrape: { scrape: async () => { throw new Error('boom: scrape timed out'); } },
+            costGate: {
+                digestAlreadyExtracted: async (id) => marked.has(id),
+                markDigestExtracted: async (id) => { marked.add(id); },
+                deepAlreadyDone: () => false,
+            },
+            sendAlert: async () => {},
+            loadGuardrails: async () => DEFAULT_GUARDRAILS,
+            loadPreferences: async () => ({ keywords: ['engineer'], locations: ['remote'], locationWeights: {} }),
+        };
+
+        // Run 1: Pass-1 row persists (SHALLOW), deep scrape fails (recorded), digest IS marked.
+        const first = await runIngestion({}, deps);
+        expect(rows.get('gmail://msgA#0')?.analysisDepth).toBe('SHALLOW');
+        expect(first.errors.some((e) => e.stage === 'deepScrape')).toBe(true);
+        expect(first.errors.some((e) => e.stage !== 'deepScrape')).toBe(false); // only the deep failure
+        expect(marked.has('msgA')).toBe(true);   // Pass-1 succeeded → finalized despite the deep failure
+
+        // Run 2: the marker cost-skips the digest — no wasted re-extraction.
+        const second = await runIngestion({}, deps);
+        expect(second.costSkipped).toBe(1);
+        expect(extractCalls).toBe(1);            // not re-extracted
+    });
 });
 
 describe('mergeGuardrailSettings (#5)', () => {
