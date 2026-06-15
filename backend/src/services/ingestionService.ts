@@ -79,16 +79,23 @@ const dbLoadPreferences = async (): Promise<IngestionPreferences> => {
 export const mergeGuardrailSettings = (stored: unknown): GuardrailSettings => {
     const s = (stored ?? {}) as Partial<GuardrailSettings>;
     return {
-        excludedIndustries: Array.isArray(s.excludedIndustries)
-            ? s.excludedIndustries
-            : DEFAULT_GUARDRAILS.excludedIndustries,
-        penaltyKeywords: Array.isArray(s.penaltyKeywords)
-            ? s.penaltyKeywords
-            : DEFAULT_GUARDRAILS.penaltyKeywords,
-        tier1Keywords: Array.isArray(s.tier1Keywords)
-            ? s.tier1Keywords
-            : DEFAULT_GUARDRAILS.tier1Keywords,
+        excludedIndustries: toStringList(s.excludedIndustries, DEFAULT_GUARDRAILS.excludedIndustries),
+        penaltyKeywords: toStringList(s.penaltyKeywords, DEFAULT_GUARDRAILS.penaltyKeywords),
+        tier1Keywords: toStringList(s.tier1Keywords, DEFAULT_GUARDRAILS.tier1Keywords),
     };
+};
+
+/**
+ * Coerce a stored guardrail list to `string[]`. The generic settings endpoint stores arbitrary
+ * JSON, so a row like `{ penaltyKeywords: [123] }` would pass `Array.isArray` yet later blow up
+ * when `includesAny`/the industry check call `.toLowerCase()` on a number. Non-array → fallback;
+ * otherwise drop non-string entries; a non-empty array with *no* valid strings is malformed → fall
+ * back to defaults, while an intentionally-empty list (`[]` = "no entries") is honoured.
+ */
+const toStringList = (value: unknown, fallback: string[]): string[] => {
+    if (!Array.isArray(value)) return fallback;
+    const strings = value.filter((v): v is string => typeof v === 'string');
+    return strings.length === 0 && value.length > 0 ? fallback : strings;
 };
 
 /** Production Guardrail-inputs loader: the `strategic_guardrails` settings row, merged with defaults. */

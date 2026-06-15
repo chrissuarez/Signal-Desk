@@ -64,6 +64,18 @@ describe('applyScoreGuardrails', () => {
     expect(result.score).toBe(40);
   });
 
+  it('vetoes via the title/description when the industry field is a broad AI label', () => {
+    // The AI extractor only emits broad industries ("Other"), so a granular veto term like
+    // "Gambling" must still be caught from the title/description, not just the industry field.
+    const result = applyScoreGuardrails(
+      { score: 88, industry: 'Other', title: 'Gambling Platform Engineer', description: 'Build a betting site' },
+      settings,
+    );
+    expect(result.score).toBe(0);
+    expect(result.forcedCategory).toBe('REJECT');
+    expect(result.concerns[0]).toContain('Gambling');
+  });
+
   it('is a no-op when nothing matches', () => {
     const result = applyScoreGuardrails(
       { score: 72, industry: 'SaaS', title: 'Engineering Manager', description: 'Lead a platform team' },

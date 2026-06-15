@@ -528,4 +528,16 @@ describe('mergeGuardrailSettings (#5)', () => {
         const full = { excludedIndustries: ['A'], penaltyKeywords: ['b'], tier1Keywords: ['c'] };
         expect(mergeGuardrailSettings(full)).toEqual(full);
     });
+
+    it('drops non-string entries so guardrails never call .toLowerCase() on a number', () => {
+        // mixed list → keep only the strings; a list with NO valid strings is malformed → defaults.
+        const merged = mergeGuardrailSettings({ excludedIndustries: ['Crypto', 123, null], penaltyKeywords: [42] });
+        expect(merged.excludedIndustries).toEqual(['Crypto']);                        // numbers/nulls dropped
+        expect(merged.penaltyKeywords).toEqual(DEFAULT_GUARDRAILS.penaltyKeywords);   // all-invalid → fallback
+    });
+
+    it('honours an intentionally-empty list (no entries) without falling back to defaults', () => {
+        const merged = mergeGuardrailSettings({ excludedIndustries: [] });
+        expect(merged.excludedIndustries).toEqual([]);
+    });
 });
