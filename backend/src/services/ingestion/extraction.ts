@@ -9,7 +9,7 @@
  */
 
 import { parseEmailBody, classifyOpportunity } from '../../engine/parser.js';
-import { analyzeOpportunityWithAI } from '../aiService.js';
+import { analyzeOpportunityWithAI, isAiAnalysisFailure } from '../aiService.js';
 import { EMPTY_STRATEGIC_ANALYSIS } from '../../engine/strategicAnalysis.js';
 import type { ExtractedOpportunity, RawSource } from './types.js';
 
@@ -25,7 +25,16 @@ export const defaultExtraction: ExtractionAdapter = {
 
     if (process.env.GEMINI_API_KEY) {
       console.log(`Analyzing message ${messageId} with AI (Length: ${body.length})...`);
-      return await analyzeOpportunityWithAI(body);
+      const results = await analyzeOpportunityWithAI(body);
+      // analyzeOpportunityWithAI swallows a Gemini/parse failure into a sentinel NOISE row
+      // rather than throwing. Surface it as a real extraction error here so the orchestrator
+      // records it and leaves the digest UNMARKED (#12) — otherwise a swallowed failure would
+      // look like a clean all-NOISE digest, get marked complete, and skip the digest forever,
+      // losing every real opportunity in it. Throwing lets the next run re-extract and recover.
+      if (isAiAnalysisFailure(results)) {
+        throw new Error(`AI extraction failed for message ${messageId}`);
+      }
+      return results;
     }
 
     const type = classifyOpportunity(body);

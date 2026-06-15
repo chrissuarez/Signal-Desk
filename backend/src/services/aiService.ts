@@ -39,6 +39,24 @@ export interface AIAnalysisResult {
   strategicAnalysis: StrategicAnalysis;
 }
 
+/**
+ * Concern stamped on the sentinel NOISE row that {@link analyzeOpportunityWithAI} returns
+ * when a Gemini/parse failure is swallowed (rather than throwing). Exported so the extraction
+ * seam can tell a *failed* analysis apart from a genuine all-NOISE digest — see
+ * {@link isAiAnalysisFailure}.
+ */
+export const AI_ANALYSIS_FAILED_CONCERN = 'AI Analysis failed';
+
+/**
+ * True when `results` is the swallowed-failure sentinel (a lone NOISE row carrying
+ * {@link AI_ANALYSIS_FAILED_CONCERN}) rather than a real analysis. A genuine all-NOISE digest
+ * (newsletter with no roles) never carries this concern, so this stays false for it.
+ */
+export const isAiAnalysisFailure = (results: AIAnalysisResult[]): boolean =>
+  results.length === 1 &&
+  results[0]?.type === 'NOISE' &&
+  (results[0]?.concerns?.includes(AI_ANALYSIS_FAILED_CONCERN) ?? false);
+
 export const analyzeOpportunityWithAI = async (text: string): Promise<AIAnalysisResult[]> => {
   if (!process.env.GEMINI_API_KEY) {
     throw new Error('GEMINI_API_KEY is not set');
@@ -174,7 +192,7 @@ export const analyzeOpportunityWithAI = async (text: string): Promise<AIAnalysis
       remoteStatus: 'Unknown',
       description: text,
       reasons: [],
-      concerns: ['AI Analysis failed'],
+      concerns: [AI_ANALYSIS_FAILED_CONCERN],
       strategicCategory: null,
       strategicAnalysis: EMPTY_STRATEGIC_ANALYSIS
     }];

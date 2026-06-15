@@ -817,6 +817,50 @@ describe('runIngestion (fake-backed pipeline)', () => {
         expect(rows.get('gmail://msgA#1')?.title).toBe('Engineer One');  // recovered
         expect(marked.has('msgA')).toBe(true);                           // now clean → marked
     });
+
+    it('does not mark a digest whose extraction failed, so it is retried (#12, Codex P1)', async () => {
+        // A swallowed Gemini/parse failure surfaces as a thrown extraction (see extraction.ts,
+        // which converts the sentinel NOISE row into an error). The source-level catch records it
+        // and the digest is left UNMARKED — otherwise a failed extraction would look like a clean
+        // all-NOISE digest, get marked, and skip the digest forever, losing every real role in it.
+        const marked = new Set<string>();
+        const { adapter: persist, rows } = makePersistDouble();
+        const job: ExtractedOpportunity = {
+            type: 'JOB', title: 'Engineer', company: 'Acme', description: 'A role',
+            sourceUrl: null, reasons: [], concerns: [], strategicCategory: null,
+            strategicAnalysis: EMPTY_STRATEGIC_ANALYSIS,
+        };
+        let failExtraction = true;
+        const deps: IngestionDeps = {
+            ...defaultDeps, persist,
+            intake: { fetchSources: async () => [SOURCES[0]!] },
+            extraction: { extract: async () => {
+                if (failExtraction) throw new Error('AI extraction failed for message msgA');
+                return [job];
+            } },
+            costGate: {
+                digestAlreadyExtracted: async (id) => marked.has(id),
+                markDigestExtracted: async (id) => { marked.add(id); },
+                deepAlreadyDone: () => false,
+            },
+            sendAlert: async () => {},
+            loadGuardrails: async () => DEFAULT_GUARDRAILS,
+            loadPreferences: async () => ({ keywords: ['engineer'], locations: [] }),
+        };
+
+        // Run 1: extraction fails → recorded as a source error, digest left unmarked.
+        const first = await runIngestion({}, deps);
+        expect(first.errors.some((e) => e.stage === 'source' && e.messageId === 'msgA')).toBe(true);
+        expect(marked.has('msgA')).toBe(false);   // failed extraction → NOT marked
+        expect(rows.size).toBe(0);
+
+        // Run 2: no marker → not skipped → re-extracts and recovers the real opportunity.
+        failExtraction = false;
+        const second = await runIngestion({}, deps);
+        expect(second.costSkipped).toBe(0);       // not skipped: failure was retried
+        expect(rows.get('gmail://msgA#0')?.title).toBe('Engineer');
+        expect(marked.has('msgA')).toBe(true);    // now clean → marked
+    });
 });
 
 describe('mergeGuardrailSettings (#5)', () => {
