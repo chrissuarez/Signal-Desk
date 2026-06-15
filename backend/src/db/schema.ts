@@ -18,6 +18,11 @@ export const strategicCategoryEnum = pgEnum('strategic_category', [
 // Risk level (#3): the LLM-judged severity of the two Strategic Analysis risk flags.
 // A distinct axis from `confidence` (AI field-extraction confidence) per CONTEXT.md.
 export const riskLevelEnum = pgEnum('risk_level', ['LOW', 'MEDIUM', 'HIGH']);
+// Analysis depth (#6, ADR-0004): how rich the text the Strategic Analysis judged was —
+// DEEP when the Pass-2 deep scrape succeeded and the role was re-analysed on the full job
+// description, SHALLOW when only the Pass-1 email snippet was available. Nullable; null on
+// legacy rows ingested before this field existed (backfilled SHALLOW by #9).
+export const analysisDepthEnum = pgEnum('analysis_depth', ['DEEP', 'SHALLOW']);
 
 export const opportunities = pgTable('opportunities', {
   id: serial('id').primaryKey(),
@@ -70,6 +75,11 @@ export const opportunities = pgTable('opportunities', {
   // sum of the six Component Scores above minus the two risk penalties (engine/
   // strategicScoring, ADR-0003). Nullable — null until an Opportunity has been scored.
   strategicScore: integer('strategic_score'),
+
+  // Analysis depth (#6, ADR-0004): DEEP once the Pass-2 deep scrape + re-analysis runs on the
+  // full job description; SHALLOW when only the Pass-1 snippet was judged. Nullable — null on
+  // rows ingested before the field existed (#9 backfills them SHALLOW).
+  analysisDepth: analysisDepthEnum('analysis_depth'),
 
   recommendedAction: recommendedActionEnum('recommended_action').default('STORE'),
   status: opportunityStatusEnum('status').default('NEW'),
