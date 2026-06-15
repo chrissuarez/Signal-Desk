@@ -98,7 +98,7 @@ npm run dev         # http://localhost:3000
 
 ### Acting on opportunities
 
-- **👍 Like / 👎 Dislike / Applied** on each card record your feedback and update its status.
+- **👍 Like / 👎 Dislike** on each card record your feedback and update its status.
   Liking a suppressed trap keeps it visible in **Liked** — your judgment outranks the system's.
 
 ### Tuning the results (Controls tab)
