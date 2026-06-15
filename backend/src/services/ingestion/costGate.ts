@@ -13,6 +13,7 @@ import { db } from '../../db/index.js';
 import { digestExtractions } from '../../db/schema.js';
 import { eq, sql } from 'drizzle-orm';
 import type { OpportunityRow } from './persist.js';
+import { NO_API_KEY_CONCERN } from './extraction.js';
 
 export interface CostGate {
   /**
@@ -87,14 +88,25 @@ export const dbCostGate: CostGate = {
  * messageId — the `canonical_url` between `gmail://` and the trailing `#<index>` — is marked
  * done. Legacy partially-failed digests (the bug this release fixes) keep whatever rows they
  * have; their never-persisted opportunities aren't reconstructable. Returns the count seeded.
+ *
+ * Exception (#12, Codex P2): a digest whose rows came from the no-key heuristic fallback (any
+ * row carrying NO_API_KEY_CONCERN) is NOT seeded. Marking it would make the first keyed run
+ * skip it at the pre-extraction `digestAlreadyExtracted` check — before the per-opportunity
+ * reprocess path that upgrades a heuristic row can run — leaving it stranded on heuristic data
+ * forever. Left unseeded, that digest re-extracts and the keyed run replaces the placeholder.
  */
 export const seedDigestMarkersFromLegacy = async (): Promise<number> => {
   const result = await db.execute(sql`
     INSERT INTO digest_extractions (message_id)
-    SELECT DISTINCT substring(canonical_url from 'gmail://(.*)#[0-9]+$')
-    FROM opportunities
-    WHERE canonical_url LIKE 'gmail://%#%'
-      AND substring(canonical_url from 'gmail://(.*)#[0-9]+$') IS NOT NULL
+    SELECT msg FROM (
+      SELECT substring(canonical_url from 'gmail://(.*)#[0-9]+$') AS msg,
+             bool_or(concerns IS NOT NULL AND jsonb_exists(concerns, ${NO_API_KEY_CONCERN})) AS has_fallback
+      FROM opportunities
+      WHERE canonical_url LIKE 'gmail://%#%'
+        AND substring(canonical_url from 'gmail://(.*)#[0-9]+$') IS NOT NULL
+      GROUP BY 1
+    ) digests
+    WHERE msg IS NOT NULL AND NOT has_fallback
     ON CONFLICT (message_id) DO NOTHING
   `);
   return result.rowCount ?? 0;
