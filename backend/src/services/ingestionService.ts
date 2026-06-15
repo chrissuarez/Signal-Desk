@@ -89,12 +89,17 @@ export const mergeGuardrailSettings = (stored: unknown): GuardrailSettings => {
  * Coerce a stored guardrail list to `string[]`. The generic settings endpoint stores arbitrary
  * JSON, so a row like `{ penaltyKeywords: [123] }` would pass `Array.isArray` yet later blow up
  * when `includesAny`/the industry check call `.toLowerCase()` on a number. Non-array → fallback;
- * otherwise drop non-string entries; a non-empty array with *no* valid strings is malformed → fall
- * back to defaults, while an intentionally-empty list (`[]` = "no entries") is honoured.
+ * otherwise keep only non-blank strings, trimmed — a whitespace-only entry like `" "` is a
+ * substring of every `title + ' ' + description`, so it would veto/cap *every* row if accepted.
+ * A non-empty array with *no* valid entries is malformed → fall back to defaults, while an
+ * intentionally-empty list (`[]` = "no entries") is honoured.
  */
 const toStringList = (value: unknown, fallback: string[]): string[] => {
     if (!Array.isArray(value)) return fallback;
-    const strings = value.filter((v): v is string => typeof v === 'string');
+    const strings = value
+        .filter((v): v is string => typeof v === 'string')
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0);
     return strings.length === 0 && value.length > 0 ? fallback : strings;
 };
 

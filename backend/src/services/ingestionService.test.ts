@@ -648,4 +648,11 @@ describe('mergeGuardrailSettings (#5)', () => {
         const merged = mergeGuardrailSettings({ excludedIndustries: [] });
         expect(merged.excludedIndustries).toEqual([]);
     });
+
+    it('trims and drops blank/whitespace-only entries so a " " never vetoes every row', () => {
+        // mixed valid + blank → keep the trimmed valid one; all-blank → malformed → defaults.
+        const merged = mergeGuardrailSettings({ excludedIndustries: [' Crypto ', '  '], penaltyKeywords: [' '] });
+        expect(merged.excludedIndustries).toEqual(['Crypto']);                        // trimmed, blank dropped
+        expect(merged.penaltyKeywords).toEqual(DEFAULT_GUARDRAILS.penaltyKeywords);   // all-blank → fallback
+    });
 });

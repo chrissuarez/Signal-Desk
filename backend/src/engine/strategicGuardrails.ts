@@ -82,8 +82,15 @@ export interface GuardrailResult {
   concerns: string[];
 }
 
+/** A needle matches a text when it is non-blank and appears (case-insensitively) as a substring.
+ *  A blank/whitespace-only needle never matches — else it would match every text. */
+const matches = (text: string, needle: string): boolean => {
+  const n = needle.trim().toLowerCase();
+  return n.length > 0 && text.includes(n);
+};
+
 const includesAny = (haystack: string, needles: string[]): string | undefined =>
-  needles.find((n) => n && haystack.includes(n.toLowerCase()));
+  needles.find((n) => matches(haystack, n));
 
 /**
  * Apply the deterministic score Guardrails to a computed score. Pure: returns the bounded
@@ -104,7 +111,7 @@ export const applyScoreGuardrails = (
   // "Other", …), so the granular veto list ("Gambling", "Adult Entertainment", "MLM") would never
   // match the industry field alone — scan the title/description too, the way penalties/tier-1 do.
   const excluded = settings.excludedIndustries.find(
-    (ind) => ind && (industry.includes(ind.toLowerCase()) || haystack.includes(ind.toLowerCase())),
+    (ind) => matches(industry, ind) || matches(haystack, ind),
   );
   if (excluded) {
     concerns.push(`Excluded industry (Guardrail): ${excluded}`);

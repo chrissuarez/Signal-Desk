@@ -76,6 +76,18 @@ describe('applyScoreGuardrails', () => {
     expect(result.concerns[0]).toContain('Gambling');
   });
 
+  it('treats a whitespace-only needle as a no-op (never matches every row)', () => {
+    // A blank excluded industry/penalty would be a substring of every "title description" haystack.
+    const blank: GuardrailSettings = { excludedIndustries: [' '], penaltyKeywords: ['  '], tier1Keywords: ['\t'] };
+    const result = applyScoreGuardrails(
+      { score: 72, industry: 'SaaS', title: 'Engineering Manager', description: 'Lead a platform team' },
+      blank,
+    );
+    expect(result.score).toBe(72);                 // not floored/capped
+    expect(result.forcedCategory).toBeUndefined(); // not vetoed
+    expect(result.concerns).toEqual([]);
+  });
+
   it('is a no-op when nothing matches', () => {
     const result = applyScoreGuardrails(
       { score: 72, industry: 'SaaS', title: 'Engineering Manager', description: 'Lead a platform team' },
