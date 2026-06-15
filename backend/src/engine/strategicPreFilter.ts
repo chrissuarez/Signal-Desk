@@ -13,10 +13,13 @@
  * positives are cheap (the LLM rejects them downstream); a missed strategic role is not.
  */
 
-/** The per-opportunity text the gate inspects (extracted title + snippet/description). */
+/** The per-opportunity text the gate inspects (extracted title + snippet/description + industry). */
 export interface PreFilterInput {
   title: string;
   description: string;
+  /** The extracted industry label, if any — checked by the hard-exclude veto in its own right,
+   *  since the AI often classifies the industry without the excluded word appearing in the text. */
+  industry?: string;
 }
 
 /**
@@ -80,12 +83,17 @@ const matches = (text: string, needle: string): boolean => {
  */
 export const strategicPreFilter: StrategicPreFilter = (input, config) => {
   const haystack = `${input.title} ${input.description}`.toLowerCase();
+  const industry = (input.industry ?? '').toLowerCase();
 
-  // Hard-exclude veto first: an excluded-industry term anywhere in the title/snippet blocks
-  // Pass 2 regardless of strategic keywords — the same conservative veto the score Guardrails
-  // apply, brought forward to the gate so we never pay for a deep analysis of an off-strategy
-  // role. (The AI emits broad industry labels, so the granular list is matched on text too.)
-  if (config.excludedIndustries.some((ind) => matches(haystack, ind))) return false;
+  // Hard-exclude veto first: an excluded-industry term blocks Pass 2 regardless of strategic
+  // keywords — the same conservative veto the score Guardrails apply, brought forward to the gate
+  // so we never pay for a deep analysis of an off-strategy role. Check the structured industry
+  // label AND the title/snippet: the AI classifies the industry ("Online Gambling") even when the
+  // word never appears in the text, so a text-only scan would let a strategically-titled role at
+  // an excluded employer through to an expensive scrape the Guardrail will only REJECT later.
+  if (config.excludedIndustries.some((ind) => matches(industry, ind) || matches(haystack, ind))) {
+    return false;
+  }
 
   // High-recall pass: any Tier-1 strategic keyword OR target role-family title.
   return [...config.tier1Keywords, ...ROLE_FAMILY_TITLES].some((n) => matches(haystack, n));

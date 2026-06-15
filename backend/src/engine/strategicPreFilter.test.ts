@@ -49,6 +49,18 @@ describe('strategicPreFilter (#6, ADR-0004)', () => {
     ).toBe(false);
   });
 
+  it('vetoes on the structured industry label even when the text is clean (Codex P2)', () => {
+    // The AI classifies industry as "Online Gambling" without the word appearing in the
+    // strategically-titled role — the veto must read the industry field, not just the text,
+    // or we pay for a scrape the score Guardrail will only REJECT downstream.
+    expect(
+      strategicPreFilter(
+        { title: 'Delivery Lead', description: 'Own delivery across teams.', industry: 'Online Gambling' },
+        CONFIG,
+      ),
+    ).toBe(false);
+  });
+
   it('matches case-insensitively and ignores surrounding text', () => {
     expect(strategicPreFilter({ title: 'HEAD OF DELIVERY', description: '' }, CONFIG)).toBe(true);
   });

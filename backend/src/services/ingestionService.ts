@@ -325,7 +325,7 @@ const processOpportunity = async (
     // role-family title in the title/snippet passes, unless a hard-exclude industry vetoes. The
     // gate reads the same configurable strategic_guardrails lists the score Guardrails use.
     if (deps.preFilter(
-        { title: analysis.title, description: analysis.description },
+        { title: analysis.title, description: analysis.description, industry: analysis.industry },
         { tier1Keywords: guardrails.tier1Keywords, excludedIndustries: guardrails.excludedIndustries },
     )) {
         summary.preFilterPassed++;
