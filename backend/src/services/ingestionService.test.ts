@@ -65,7 +65,10 @@ const SOURCES: RawSource[] = [
 const EXTRACTED: ExtractedOpportunity[] = [
     {
         type: 'JOB', title: 'Senior Engineer TypeScript AI', company: 'Acme',
-        description: 'Remote position', location: 'Remote', sourceUrl: 'https://example.com/job1',
+        // 'delivery lead' in the snippet passes the strategic Pre-filter (#6) — the SEO-flavoured
+        // title alone would not. The Fit-score keywords stay in the title, so fitScore is still 85
+        // (the scorer reads the digest body, not this snippet — so the extra phrase can't shift it).
+        description: 'Remote delivery lead position', location: 'Remote', sourceUrl: 'https://example.com/job1',
         reasons: ['extracted reason'], concerns: [], strategicCategory: 'STRATEGIC_FIT',
         // Populated Pass-1 block scoring sub-threshold strategically (64) despite the high
         // Fit Score (85): proves routing follows the Strategic Score, not the Fit Score.
@@ -150,7 +153,7 @@ describe('runIngestion (fake-backed pipeline)', () => {
         expect(summary.sourcesSeen).toBe(2);
         expect(summary.costSkipped).toBe(1);        // msgB skipped by the Pass-1 Cost Gate
         expect(summary.extracted).toBe(4);          // all of msgA's items, NOISE included
-        expect(summary.preFilterPassed).toBe(1);    // only the high-fit (85) job clears > 60
+        expect(summary.preFilterPassed).toBe(1);    // only the 'delivery lead' job clears the strategic gate (#6)
         expect(summary.deepAnalyzed).toBe(1);       // and it has a sourceUrl, so Pass 2 runs
         expect(summary.created).toBe(3);            // high + mid + low; NOISE is not persisted
         expect(summary.updated).toBe(0);
@@ -207,6 +210,12 @@ describe('runIngestion (fake-backed pipeline)', () => {
         expect(mid?.strategicScore).toBe(33);
         expect(low?.strategicScore).toBeNull();
 
+        // Analysis depth (#6): the high row was re-judged on the full scraped description → DEEP;
+        // mid and low never ran Pass 2 (no sourceUrl), so their judgment is snippet-only → SHALLOW.
+        expect(high?.analysisDepth).toBe('DEEP');
+        expect(mid?.analysisDepth).toBe('SHALLOW');
+        expect(low?.analysisDepth).toBe('SHALLOW');
+
         // Ingestion no longer writes status — it is purely the user's lifecycle field now.
         expect(high?.status).toBeUndefined();
 
@@ -253,10 +262,11 @@ describe('runIngestion (fake-backed pipeline)', () => {
     });
 
     it('sends the alert when Pass 2 promotes a row from STORE to ALERT (#4)', async () => {
-        // Pass 1 scores sub-threshold (STORE, no alert), but the Fit Score (65) clears the
+        // Pass 1 scores sub-threshold (STORE, no alert), but the role clears the strategic
         // pre-filter so Pass 2 runs; the deeper block scores ≥80 and promotes the row to
         // ALERT. The immediate alert must fire on that final decision — not be skipped
-        // because Pass 1 was STORE.
+        // because Pass 1 was STORE. (preFilter forced on: this test is about the promotion +
+        // alert, not the gate's matching — that has its own unit tests.)
         const promoteExtracted: ExtractedOpportunity = {
             type: 'JOB', title: 'Engineer', company: 'Promo',
             description: 'A role', location: 'Remote', sourceUrl: 'https://example.com/promote',
@@ -288,6 +298,7 @@ describe('runIngestion (fake-backed pipeline)', () => {
             persist,
             intake: { fetchSources: async () => [SOURCES[0]!] },
             extraction: { extract: async () => [promoteExtracted] },
+            preFilter: () => true, // force Pass 2; the gate's matching is unit-tested separately
             deepScrape: { scrape: async (url): Promise<ScrapedContent> => ({ title: 't', description: SCRAPED_DESCRIPTION, url }) },
             strategicAnalysis: { analyze: async () => [promoteFinal] },
             costGate: { digestAlreadyExtracted: async () => false, deepAlreadyDone: () => false },
@@ -302,15 +313,17 @@ describe('runIngestion (fake-backed pipeline)', () => {
         expect(summary.deepAnalyzed).toBe(1);                   // Pass 2 ran
         expect(row?.recommendedAction).toBe('ALERT');           // promoted by the deep block
         expect(row?.strategicScore).toBeGreaterThanOrEqual(80);
+        expect(row?.analysisDepth).toBe('DEEP');                // re-judged on the full scrape (#6)
         expect(alerted).toHaveLength(1);                        // …and the user was notified
         expect(alerted[0]?.strategicScore).toBe(row?.strategicScore); // alert carries the Pass-2 state
     });
 
     it('still alerts on the Pass-1 decision when the Pass-2 deep scrape fails (#4)', async () => {
         // A row that already routes to ALERT on Pass 1 (strong Pass-1 block) and clears the
-        // pre-filter (Fit 65 > 60) so Pass 2 runs — but the deep scrape throws. The optional
-        // enrichment failure must NOT swallow the Pass-1 alert: the row is already persisted
-        // as ALERT, so the notification must still fire and the failure be recorded.
+        // pre-filter so Pass 2 runs — but the deep scrape throws. The optional enrichment
+        // failure must NOT swallow the Pass-1 alert: the row is already persisted as ALERT,
+        // so the notification must still fire and the failure be recorded. (preFilter forced
+        // on: this test is about the Pass-1 alert surviving a deep failure, not the gate.)
         const alertExtracted: ExtractedOpportunity = {
             type: 'JOB', title: 'Engineer', company: 'Flaky',
             description: 'A role', location: 'Remote', sourceUrl: 'https://example.com/flaky',
@@ -330,6 +343,7 @@ describe('runIngestion (fake-backed pipeline)', () => {
             persist,
             intake: { fetchSources: async () => [SOURCES[0]!] },
             extraction: { extract: async () => [alertExtracted] },
+            preFilter: () => true, // force Pass 2; the gate's matching is unit-tested separately
             deepScrape: { scrape: async () => { throw new Error('boom: scrape timed out'); } },
             costGate: { digestAlreadyExtracted: async () => false, deepAlreadyDone: () => false },
             sendAlert: async (row) => { alerted.push(row); },
@@ -343,6 +357,9 @@ describe('runIngestion (fake-backed pipeline)', () => {
         expect(row?.recommendedAction).toBe('ALERT');                // Pass-1 decision persisted
         expect(row?.strategicScore).toBeGreaterThanOrEqual(80);
         expect(summary.deepAnalyzed).toBe(0);                        // Pass 2 never completed
+        // AC#5: the pre-filtered role whose scrape failed keeps its snippet-level (SHALLOW)
+        // Strategic Analysis — the depth is never upgraded to DEEP when the deep pass aborts.
+        expect(row?.analysisDepth).toBe('SHALLOW');
         // The deep-pass failure is recorded, scoped to the opportunity's canonical URL...
         expect(summary.errors).toHaveLength(1);
         expect(summary.errors[0]?.stage).toBe('deepScrape');
@@ -614,6 +631,98 @@ describe('runIngestion (fake-backed pipeline)', () => {
         expect(row?.strategicCategory).toBe('REJECT');   // ...through enrichment
         expect(row?.recommendedAction).toBe('SUPPRESS');
         expect(row?.concerns?.some((c) => c.includes('Gambling'))).toBe(true);
+    });
+
+    it('preserves a DEEP row on a forced reprocess instead of downgrading it (#6, Codex P2)', async () => {
+        // A row already deep-analysed (DEEP, full scraped description) is re-encountered on a
+        // forced run. Re-running Pass 1 would overwrite it with a snippet-level read, and the
+        // deep pass is cost-gated from re-running — so the orchestrator leaves it untouched
+        // rather than silently downgrade its depth + content to SHALLOW. Drives the REAL cost
+        // gate (deepAlreadyDone keys on analysisDepth), only digest extraction is faked.
+        const { adapter: persist, rows } = makePersistDouble();
+        const deepRow = {
+            id: 1, canonicalUrl: 'gmail://msgA#0', title: 'Delivery Lead', company: 'Acme',
+            description: SCRAPED_DESCRIPTION, fitScore: 70, strategicScore: 90,
+            analysisDepth: 'DEEP', recommendedAction: 'ALERT',
+        } as OpportunityRow;
+        rows.set('gmail://msgA#0', deepRow);
+
+        const freshShallow: ExtractedOpportunity = {
+            type: 'JOB', title: 'Delivery Lead', company: 'Acme', description: 'snippet only',
+            sourceUrl: 'https://example.com/job1', reasons: [], concerns: [],
+            strategicCategory: null, strategicAnalysis: EMPTY_STRATEGIC_ANALYSIS,
+        };
+        const deps: IngestionDeps = {
+            ...defaultDeps, persist,
+            intake: { fetchSources: async () => [SOURCES[0]!] },
+            extraction: { extract: async () => [freshShallow] },
+            deepScrape: { scrape: async (url): Promise<ScrapedContent> => ({ title: 't', description: SCRAPED_DESCRIPTION, url }) },
+            strategicAnalysis: { analyze: async () => [FINAL_ANALYSIS] },
+            // Real deepAlreadyDone (keys on analysisDepth); only the digest extraction gate is faked.
+            costGate: { digestAlreadyExtracted: async () => false, deepAlreadyDone: defaultDeps.costGate.deepAlreadyDone },
+            sendAlert: async () => {},
+            loadGuardrails: async () => DEFAULT_GUARDRAILS,
+            loadPreferences: async () => ({ keywords: [], locations: [] }),
+        };
+
+        const summary = await runIngestion({ force: true }, deps);
+
+        const row = rows.get('gmail://msgA#0');
+        expect(summary.extracted).toBe(1);          // Pass 1 still extracted it...
+        expect(summary.created).toBe(0);            // ...but the deep row was left untouched:
+        expect(summary.updated).toBe(0);            // no re-persist
+        expect(summary.deepAnalyzed).toBe(0);       // and no re-deepen
+        expect(row?.analysisDepth).toBe('DEEP');    // depth preserved, not downgraded to SHALLOW
+        expect(row?.description).toBe(SCRAPED_DESCRIPTION); // deep content preserved
+        expect(row?.strategicScore).toBe(90);       // untouched
+    });
+
+    it('leaves a row SHALLOW + retryable when the deep re-analysis returns NOISE (#6, Codex P2)', async () => {
+        // The production analyzer swallows a Gemini/parse failure and returns a truthy NOISE row
+        // with an EMPTY strategic block. Marking that DEEP would persist empty fields and flip the
+        // cost gate to deep-done, so the pre-Pass-1 guard would block every retry. Instead the row
+        // must keep its Pass-1 SHALLOW analysis and stay retryable.
+        const noiseDeep: AIAnalysisResult = {
+            type: 'NOISE', title: 'Unknown', company: 'Unknown', industry: 'Unknown',
+            location: 'Unknown', remoteStatus: 'Unknown', description: SCRAPED_DESCRIPTION,
+            reasons: [], concerns: ['AI Analysis failed'], strategicCategory: null,
+            strategicAnalysis: EMPTY_STRATEGIC_ANALYSIS,
+        };
+        const shallowExtracted: ExtractedOpportunity = {
+            type: 'JOB', title: 'Delivery Lead', company: 'Acme', description: 'snippet only',
+            sourceUrl: 'https://example.com/job1', reasons: [], concerns: [], strategicCategory: 'USEFUL_BRIDGE',
+            strategicAnalysis: {
+                consultancyAlignment: 55, deliveryVisibility: 45, commercialProximity: 40,
+                buyerEnvironmentFit: 35, seniorityScope: 50,
+                resourceAdminTrapRisk: 'LOW', seoComfortZoneRisk: 'LOW',
+                realRoleInterpretation: 'shallow', consultancyRelevance: 'some',
+                strategicReasons: ['shallow reason'], strategicConcerns: [], recommendedScreeningQuestions: [],
+            },
+        };
+        const { adapter: persist, rows } = makePersistDouble();
+        const deps: IngestionDeps = {
+            ...defaultDeps, persist,
+            intake: { fetchSources: async () => [SOURCES[0]!] },
+            extraction: { extract: async () => [shallowExtracted] },
+            preFilter: () => true,
+            deepScrape: { scrape: async (url): Promise<ScrapedContent> => ({ title: 't', description: SCRAPED_DESCRIPTION, url }) },
+            strategicAnalysis: { analyze: async () => [noiseDeep] },
+            costGate: { digestAlreadyExtracted: async () => false, deepAlreadyDone: defaultDeps.costGate.deepAlreadyDone },
+            sendAlert: async () => {},
+            loadGuardrails: async () => DEFAULT_GUARDRAILS,
+            loadPreferences: async () => ({ keywords: [], locations: [] }),
+        };
+
+        const summary = await runIngestion({}, deps);
+
+        const row = rows.get('gmail://msgA#0');
+        expect(summary.deepAnalyzed).toBe(0);                 // NOISE is not a completed deep analysis
+        expect(row?.analysisDepth).toBe('SHALLOW');           // left retryable, not marked DEEP
+        expect(row?.consultancyAlignment).toBe(55);           // Pass-1 strategic block preserved, not emptied
+        expect(row?.description).toBe('snippet only');        // not overwritten by the NOISE deep result
+        expect(summary.errors.some((e) => e.stage === 'deepScrape')).toBe(true); // failure surfaced
+        // The cost gate now allows a retry: a SHALLOW row is not deep-done.
+        expect(defaultDeps.costGate.deepAlreadyDone(row)).toBe(false);
     });
 });
 

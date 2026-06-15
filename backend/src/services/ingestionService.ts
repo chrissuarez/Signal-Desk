@@ -10,7 +10,7 @@
  */
 
 import { legacyScoreReconcile, type ScoreReconcile } from '../engine/scoreReconcile.js';
-import { legacyPreFilter, type StrategicPreFilter } from '../engine/strategicPreFilter.js';
+import { strategicPreFilter, type StrategicPreFilter } from '../engine/strategicPreFilter.js';
 import { decideRecommendedAction } from '../engine/recommendedActionRouting.js';
 import { computeStrategicScore } from '../engine/strategicScoring.js';
 import { applyScoreGuardrails, DEFAULT_GUARDRAILS, type GuardrailSettings } from '../engine/strategicGuardrails.js';
@@ -115,7 +115,7 @@ const dbLoadGuardrails = async (): Promise<GuardrailSettings> => {
 export const defaultDeps: IngestionDeps = {
     intake: gmailIntake,
     extraction: defaultExtraction,
-    preFilter: legacyPreFilter,
+    preFilter: strategicPreFilter,
     deepScrape: httpDeepScrape,
     strategicAnalysis: aiStrategicAnalysis,
     scoreReconcile: legacyScoreReconcile,
@@ -225,6 +225,16 @@ const processOpportunity = async (
         return;
     }
 
+    // #6: a row already at DEEP analysis depth is at its best read. A forced reprocess re-runs
+    // Pass 1, which would overwrite it with a snippet-level (SHALLOW) analysis — and the deep
+    // pass is cost-gated from re-running — so leave it untouched rather than silently downgrade
+    // its depth + scraped content. The deep cost gate runs here (depth is known before Pass 1),
+    // not just at the Pass-2 scrape: skipping the whole reprocess is what preserves the deep row.
+    if (deps.costGate.deepAlreadyDone(existing)) {
+        console.log(`Opportunity ${canonicalUrl} already deep-analyzed (DEEP). Preserving analysis.`);
+        return;
+    }
+
     const scored = deps.scoreReconcile({
         title: analysis.title,
         description: body,
@@ -290,6 +300,9 @@ const processOpportunity = async (
         strategicCategory,
         ...strategicFields,
         strategicScore,
+        // #6 (ADR-0004): SHALLOW until a Pass-2 deep re-analysis upgrades it to DEEP below.
+        // Every persisted row records a depth so the dashboard can flag snippet-only judgments.
+        analysisDepth: 'SHALLOW',
         recommendedAction,
     }, {
         title: analysis.title,
@@ -305,6 +318,7 @@ const processOpportunity = async (
         strategicCategory,
         ...strategicFields,
         strategicScore,
+        analysisDepth: 'SHALLOW',
         recommendedAction,
         updatedAt: new Date(),
     });
@@ -316,10 +330,20 @@ const processOpportunity = async (
     // on the Pass-1 decision would miss promotions and fire premature alerts on demotions.
     let alertRow: OpportunityRow | undefined = insertedRow;
 
-    // PASS 2: Deep Scrape for high-potential jobs.
-    if (deps.preFilter({ fitScore: scored.fitScore })) {
+    // PASS 2 (ADR-0004): the Strategic Pre-filter — not the Fit Score — decides whether this
+    // role earns a deep scrape + full re-analysis. High recall: any Tier-1 keyword or target
+    // role-family title in the title/snippet passes, unless a hard-exclude industry vetoes. The
+    // gate reads the same configurable strategic_guardrails lists the score Guardrails use.
+    if (deps.preFilter(
+        // `?? ''` (not explicit undefined) for exactOptionalPropertyTypes; '' = "no industry" (no veto).
+        { title: analysis.title, description: analysis.description, industry: analysis.industry ?? '' },
+        { tier1Keywords: guardrails.tier1Keywords, excludedIndustries: guardrails.excludedIndustries },
+    )) {
         summary.preFilterPassed++;
-        if (analysis.sourceUrl && !deps.costGate.deepAlreadyDone(existing)) {
+        // The deep cost gate already ran up front (a DEEP row never reaches here), so a
+        // pre-filtered row with a sourceUrl always attempts the deep pass — including a
+        // previously-SHALLOW row on reprocess, which now gets a chance to reach DEEP.
+        if (analysis.sourceUrl) {
             // Deep scrape + re-analysis is optional enrichment. A transient scrape/analysis
             // failure must not lose the Pass-1 decision or its alert — the row is already
             // persisted on the Pass-1 recommendedAction — so it is isolated here: on error we
@@ -333,7 +357,13 @@ const processOpportunity = async (
                     console.log(`Pass 2: Re-analyzing with full description (Length: ${scraped.description.length})...`);
                     const deepAnalysis = await deps.strategicAnalysis.analyze(scraped.description);
                     const finalAnalysis = deepAnalysis?.[0];
-                    if (finalAnalysis && insertedRow?.id) {
+                    // The production analyzer SWALLOWS Gemini/parse failures and returns a truthy
+                    // NOISE row with an EMPTY strategic block (aiService) — it does not throw. Marking
+                    // that as DEEP would persist empty strategic fields AND flip the cost gate to
+                    // "deep-done", so the pre-Pass-1 guard would block every future retry, stranding
+                    // the row forever. Only a genuine (non-NOISE) deep result upgrades to DEEP; a
+                    // NOISE result leaves the row at its Pass-1 SHALLOW state so a reprocess can retry.
+                    if (finalAnalysis && finalAnalysis.type !== 'NOISE' && insertedRow?.id) {
                         const finalScored = deps.scoreReconcile({
                             title: finalAnalysis.title,
                             description: scraped.description,
@@ -379,6 +409,8 @@ const processOpportunity = async (
                             strategicCategory: finalReconciled.strategicCategory,
                             ...finalStrategicFields,
                             strategicScore: finalStrategicScore,
+                            // #6: this role was re-judged on the full scraped description → DEEP.
+                            analysisDepth: 'DEEP' as const,
                             recommendedAction,
                             updatedAt: new Date(),
                         };
@@ -387,6 +419,15 @@ const processOpportunity = async (
                         alertRow = { ...insertedRow, ...deepUpdate } as OpportunityRow;
                         summary.deepAnalyzed++;
                         console.log(`Pass 2 Complete: ${finalAnalysis.title} re-scored to ${finalScored.fitScore}`);
+                    } else if (finalAnalysis && finalAnalysis.type === 'NOISE' && insertedRow?.id) {
+                        // Deep analysis came back NOISE — i.e. the analyzer swallowed a failure (or the
+                        // scraped page wasn't a real posting). Don't persist the empty block or mark DEEP;
+                        // record it so it's visible and leave the row SHALLOW for a later retry.
+                        recordError(
+                            summary,
+                            { stage: 'deepScrape', messageId, canonicalUrl },
+                            new Error('Deep re-analysis returned NOISE; left SHALLOW for retry'),
+                        );
                     }
                 }
             } catch (error) {

@@ -28,9 +28,12 @@ export interface CostGate {
   /**
    * Pass-2 checkpoint: has the deep step already run for this opportunity?
    *
-   * Shaped for the target "skip if Analysis Depth = DEEP". The `analysisDepth` column
-   * does not exist yet, so today this proxies on whether the row already existed before
-   * this run. The Analysis Depth slice swaps the body without re-cutting the seam.
+   * The target shape (#6): a row is "deep-done" iff its Analysis Depth is DEEP — it has already
+   * been re-analysed on the full scraped description. This replaced the earlier proxy ("row
+   * existed before this run"), which downgraded a forced reprocess of a deep row: Pass 1 would
+   * overwrite it with a snippet-level read while the deep pass was (correctly) skipped. Keying on
+   * the real depth lets a SHALLOW row (whose scrape once failed) retry the deep pass on reprocess,
+   * while a DEEP row is left untouched (see the orchestrator's pre-Pass-1 guard).
    */
   deepAlreadyDone(existing: OpportunityRow | undefined): boolean;
 }
@@ -45,6 +48,6 @@ export const dbCostGate: CostGate = {
   },
 
   deepAlreadyDone(existing) {
-    return existing !== undefined;
+    return existing?.analysisDepth === 'DEEP';
   },
 };
