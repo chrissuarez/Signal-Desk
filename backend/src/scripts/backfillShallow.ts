@@ -10,8 +10,8 @@
  *
  * Idempotency: only rows with `analysisDepth IS NULL` are selected (the pre-#6 legacy marker, per
  * schema.ts). A re-run therefore skips already-backfilled rows and never downgrades a DEEP/SHALLOW
- * row. A row whose re-analysis returns NOISE (or has no stored text) is left untouched at NULL so
- * a later run can retry it.
+ * row. A row whose re-analysis returns NOISE, yields no usable Strategic Score (an empty/garbled
+ * strategic block), or has no stored text is left untouched at NULL so a later run can retry it.
  *
  * Run: `npm run backfill:shallow` (from backend/).
  */
@@ -62,6 +62,8 @@ export interface BackfillSummary {
     skippedEmpty: number;
     /** Rows skipped because re-analysis returned NOISE / no result (left NULL for retry). */
     skippedNoise: number;
+    /** Rows skipped because the strategic block was empty/garbled (null score; left NULL for retry). */
+    skippedUnusable: number;
     /** Tally of backfilled rows by their routed Recommended Action. */
     byRecommendedAction: Record<RecommendedAction, number>;
     /** Failures collected during the run. */
@@ -73,6 +75,7 @@ const emptySummary = (): BackfillSummary => ({
     backfilled: 0,
     skippedEmpty: 0,
     skippedNoise: 0,
+    skippedUnusable: 0,
     byRecommendedAction: { ALERT: 0, DIGEST: 0, STORE: 0, SUPPRESS: 0 },
     errors: [],
 });
@@ -145,6 +148,18 @@ export const runBackfill = async (
                 scoreReconcile: deps.scoreReconcile,
             });
 
+            // A non-NOISE result can still carry an empty/garbled strategic block (the AI boundary
+            // coerces malformed component scores to null rather than to NOISE). computeStrategicScore
+            // then returns null — no usable Strategic Score, the very thing this backfill exists to add.
+            // Marking such a row SHALLOW would strand it: the loader only retries `analysisDepth IS NULL`.
+            // So leave it NULL for a later retry, exactly as a NOISE result is left. (A non-null score with
+            // a null category is NOT unusable — it's a legitimately-analysed row, identical to a live SHALLOW
+            // row, and re-running the same stored text wouldn't conjure a category, so it is kept.)
+            if (pass.strategicScore === null) {
+                summary.skippedUnusable++;
+                continue;
+            }
+
             await deps.persist.updateById(row.id, {
                 fitScore: pass.fitScore,
                 ...pass.strategicFields,
@@ -172,7 +187,8 @@ export const runBackfill = async (
 
     console.log(
         `Backfill complete. Considered ${summary.considered}, backfilled ${summary.backfilled}, ` +
-        `skipped ${summary.skippedEmpty} empty / ${summary.skippedNoise} noise, errors ${summary.errors.length}.`,
+        `skipped ${summary.skippedEmpty} empty / ${summary.skippedNoise} noise / ` +
+        `${summary.skippedUnusable} unusable, errors ${summary.errors.length}.`,
     );
     return summary;
 };

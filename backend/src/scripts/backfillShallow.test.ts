@@ -125,6 +125,25 @@ describe('runBackfill', () => {
         expect(summary.backfilled).toBe(0);
     });
 
+    it('skips a non-NOISE result with an empty strategic block (null score), leaving it NULL', async () => {
+        // A JOB result whose strategic block was garbled to all-null by the AI boundary: not NOISE,
+        // but computeStrategicScore returns null. Marking it SHALLOW would strand it (loader only
+        // retries NULL depth), so it must be left NULL — the exact bug Codex flagged on PR #25.
+        const emptyBlockResult: AIAnalysisResult = {
+            ...STRONG_ANALYSIS,
+            strategicCategory: null,
+            strategicAnalysis: EMPTY_STRATEGIC_ANALYSIS,
+        };
+        const row = makeRow({ id: 10 });
+        const { deps, writes } = makeDeps([row], async () => [emptyBlockResult]);
+
+        const summary = await runBackfill(deps);
+
+        expect(writes).toHaveLength(0);
+        expect(summary.skippedUnusable).toBe(1);
+        expect(summary.backfilled).toBe(0);
+    });
+
     it('skips a row with no stored description', async () => {
         const row = makeRow({ id: 9, description: '   ' });
         let analyzeCalls = 0;
