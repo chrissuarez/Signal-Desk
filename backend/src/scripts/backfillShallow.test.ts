@@ -51,8 +51,15 @@ const makeRow = (over: Partial<OpportunityRow> & { id: number }): OpportunityRow
     industry: null,
     location: 'Remote',
     analysisDepth: null,
+    status: 'NEW',
     ...over,
 } as OpportunityRow);
+
+/** A block that reconciles to RESOURCE_ADMIN_TRAP (HIGH trap risk) → routes SUPPRESS; still scored. */
+const TRAP_ANALYSIS: AIAnalysisResult = {
+    ...STRONG_ANALYSIS,
+    strategicAnalysis: { ...STRONG_ANALYSIS.strategicAnalysis, resourceAdminTrapRisk: 'HIGH' },
+};
 
 /** Build deps: real engine seams, fake I/O. Returns the captured updateById writes. */
 const makeDeps = (
@@ -112,6 +119,46 @@ describe('runBackfill', () => {
         expect(summary.considered).toBe(1);
         expect(summary.backfilled).toBe(1);
         expect(summary.byRecommendedAction[expected.recommendedAction]).toBe(1);
+    });
+
+    it('SUPPRESSes a pristine (NEW) legacy row that reconciles to a confirmed-bad category', async () => {
+        const row = makeRow({ id: 20, status: 'NEW' });
+        const { deps, writes } = makeDeps([row], async () => [TRAP_ANALYSIS]);
+
+        const summary = await runBackfill(deps);
+
+        // Anchor: this block really does route to SUPPRESS through the live engine.
+        const expected = runStrategicPass({
+            analysis: {
+                title: row.title, description: row.description!,
+                industry: row.industry ?? undefined, location: row.location ?? undefined,
+                strategicCategory: TRAP_ANALYSIS.strategicCategory,
+                strategicAnalysis: TRAP_ANALYSIS.strategicAnalysis,
+            },
+            scoringText: row.description!, preferences: PREFERENCES,
+            guardrails: DEFAULT_GUARDRAILS, scoreReconcile: legacyScoreReconcile,
+        });
+        expect(expected.recommendedAction).toBe('SUPPRESS');
+
+        expect(writes[0]!.set.recommendedAction).toBe('SUPPRESS');
+        expect(summary.visibilityPreserved).toBe(0);
+    });
+
+    it('downgrades SUPPRESS → STORE for an engaged (SAVED) row so it stays visible, still scored', async () => {
+        const row = makeRow({ id: 21, status: 'SAVED' });
+        const { deps, writes } = makeDeps([row], async () => [TRAP_ANALYSIS]);
+
+        const summary = await runBackfill(deps);
+
+        // The user's saved row must not vanish: SUPPRESS is downgraded to STORE...
+        expect(writes[0]!.set.recommendedAction).toBe('STORE');
+        // ...but the strategic score/category are still recorded and it's marked SHALLOW.
+        expect(writes[0]!.set.strategicScore).not.toBeNull();
+        expect(writes[0]!.set.strategicCategory).toBe('RESOURCE_ADMIN_TRAP');
+        expect(writes[0]!.set.analysisDepth).toBe('SHALLOW');
+        expect(summary.visibilityPreserved).toBe(1);
+        expect(summary.byRecommendedAction.STORE).toBe(1);
+        expect(summary.byRecommendedAction.SUPPRESS).toBe(0);
     });
 
     it('skips a row whose re-analysis returns NOISE, leaving it NULL for retry', async () => {

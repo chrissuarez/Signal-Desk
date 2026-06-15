@@ -64,7 +64,9 @@ export interface BackfillSummary {
     skippedNoise: number;
     /** Rows skipped because the strategic block was empty/garbled (null score; left NULL for retry). */
     skippedUnusable: number;
-    /** Tally of backfilled rows by their routed Recommended Action. */
+    /** Backfilled rows whose computed SUPPRESS was downgraded to STORE to keep an engaged row visible. */
+    visibilityPreserved: number;
+    /** Tally of backfilled rows by their persisted Recommended Action (after any SUPPRESS downgrade). */
     byRecommendedAction: Record<RecommendedAction, number>;
     /** Failures collected during the run. */
     errors: BackfillError[];
@@ -76,6 +78,7 @@ const emptySummary = (): BackfillSummary => ({
     skippedEmpty: 0,
     skippedNoise: 0,
     skippedUnusable: 0,
+    visibilityPreserved: 0,
     byRecommendedAction: { ALERT: 0, DIGEST: 0, STORE: 0, SUPPRESS: 0 },
     errors: [],
 });
@@ -160,12 +163,25 @@ export const runBackfill = async (
                 continue;
             }
 
+            // A legacy row the user/system has already moved past pristine NEW (SAVED, APPLIED,
+            // DISMISSED, SENT) is currently visible — GET /opportunities hides only SUPPRESS, then
+            // the frontend filters by status. A backfill-assigned SUPPRESS would drop it before the
+            // status-tab filter, so a saved/applied row would silently vanish. The user's lifecycle
+            // intent outranks the system's suppression, so downgrade SUPPRESS → STORE (visible,
+            // non-alerting) for those rows — preserving their pre-backfill visibility exactly while
+            // still recording the strategic score/category. Live ingestion never hits this: a
+            // freshly-ingested row is always status NEW, where SUPPRESS is the intended cleanup.
+            const userEngaged = !!row.status && row.status !== 'NEW';
+            const recommendedAction =
+                pass.recommendedAction === 'SUPPRESS' && userEngaged ? 'STORE' : pass.recommendedAction;
+            if (recommendedAction !== pass.recommendedAction) summary.visibilityPreserved++;
+
             await deps.persist.updateById(row.id, {
                 fitScore: pass.fitScore,
                 ...pass.strategicFields,
                 strategicScore: pass.strategicScore,
                 strategicCategory: pass.strategicCategory,
-                recommendedAction: pass.recommendedAction,
+                recommendedAction,
                 // #6/ADR-0004: snippet-level origin → SHALLOW. This is also the idempotency marker
                 // that excludes the row from the next run's loader.
                 analysisDepth: 'SHALLOW',
@@ -173,10 +189,11 @@ export const runBackfill = async (
             });
 
             summary.backfilled++;
-            summary.byRecommendedAction[pass.recommendedAction]++;
+            summary.byRecommendedAction[recommendedAction]++;
             console.log(
                 `Backfilled #${row.id} "${row.title}" → score ${pass.strategicScore ?? 'null'}, ` +
-                `category ${pass.strategicCategory ?? 'null'}, action ${pass.recommendedAction}.`,
+                `category ${pass.strategicCategory ?? 'null'}, action ${recommendedAction}` +
+                `${recommendedAction !== pass.recommendedAction ? ` (SUPPRESS downgraded — status ${row.status})` : ''}.`,
             );
         } catch (error: any) {
             const message = error?.message || String(error);
