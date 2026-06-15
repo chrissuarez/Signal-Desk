@@ -11,7 +11,7 @@
 
 import { db } from '../../db/index.js';
 import { digestExtractions } from '../../db/schema.js';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import type { OpportunityRow } from './persist.js';
 
 export interface CostGate {
@@ -70,4 +70,50 @@ export const dbCostGate: CostGate = {
   deepAlreadyDone(existing) {
     return existing?.analysisDepth === 'DEEP';
   },
+};
+
+/**
+ * One-time transition seed (#12). Marks every digest that already has a persisted opportunity
+ * as extracted, so switching the Pass-1 check from the old `#0`-presence proxy to the
+ * `digest_extractions` marker doesn't make the first run after deploy treat every
+ * already-handled Gmail digest as new and re-pay the Gemini extraction cost for it.
+ *
+ * Why here and not in migration 0006: the project applies schema with `drizzle-kit push`,
+ * which ignores hand-written data SQL in migration files — so the backfill has to run from
+ * code. `initWorker` calls this at startup. Idempotent via ON CONFLICT DO NOTHING, and the
+ * caller skips it once any marker exists, so it does real work at most once.
+ *
+ * A digest with any persisted opportunity completed extraction under the old code, so its
+ * messageId — the `canonical_url` between `gmail://` and the trailing `#<index>` — is marked
+ * done. Legacy partially-failed digests (the bug this release fixes) keep whatever rows they
+ * have; their never-persisted opportunities aren't reconstructable. Returns the count seeded.
+ */
+export const seedDigestMarkersFromLegacy = async (): Promise<number> => {
+  const result = await db.execute(sql`
+    INSERT INTO digest_extractions (message_id)
+    SELECT DISTINCT substring(canonical_url from 'gmail://(.*)#[0-9]+$')
+    FROM opportunities
+    WHERE canonical_url LIKE 'gmail://%#%'
+      AND substring(canonical_url from 'gmail://(.*)#[0-9]+$') IS NOT NULL
+    ON CONFLICT (message_id) DO NOTHING
+  `);
+  return result.rowCount ?? 0;
+};
+
+/**
+ * Run the #12 transition seed only when the markers table is still empty — so it transitions a
+ * legacy database exactly once and is a cheap no-op on every boot thereafter. Safe on a fresh
+ * install (no opportunities → seeds nothing). Never throws into the caller; logs and swallows.
+ */
+export const backfillDigestMarkersOnce = async (): Promise<void> => {
+  try {
+    const existing = await db.query.digestExtractions.findFirst();
+    if (existing) return; // already seeded, or markers written by a prior run — nothing to do
+    const seeded = await seedDigestMarkersFromLegacy();
+    if (seeded > 0) {
+      console.log(`Cost Gate: seeded ${seeded} digest completion marker(s) from existing opportunities (#12 transition).`);
+    }
+  } catch (error) {
+    console.error('Cost Gate: digest-marker backfill failed (non-fatal):', error);
+  }
 };
