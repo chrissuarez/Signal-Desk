@@ -1,20 +1,47 @@
 import type { Opportunity } from '../types.js';
 import { db } from '../db/index.js';
 import { opportunities, feedback } from '../db/schema.js';
-import { desc, eq, ne, or, isNull, sql } from 'drizzle-orm';
+import { desc, eq, ne, or, inArray, isNull, sql, type SQL } from 'drizzle-orm';
 import { Router } from 'express';
+import { parseOpportunityFilter } from './opportunityFilter.js';
 
 const router = Router();
 
 router.get('/', async (req, res) => {
     try {
+        // The dashboard's strategic filter tabs (#8) pass `?category=`/`?action=`. Parse +
+        // validate them into a normalized filter (junk dropped) before touching the query.
+        const filter = parseOpportunityFilter(req.query.category, req.query.action);
+
         // ADR-0005 (#13): route on the system's recommendedAction — hide SUPPRESS rows
-        // from the default view (kept, never deleted) and float ALERT rows to the top.
-        // ADR-0001 (#4): the Strategic Score is now the ranking authority — order by it
-        // (not the Fit Score), with un-scored rows last, then recency as the tiebreak.
+        // from the *default* view (kept, never deleted) and float ALERT rows to the top.
+        // ADR-0001 (#4): the Strategic Score is the ranking authority — order by it (not
+        // the Fit Score), with un-scored rows last, then recency as the tiebreak.
         // (Null/legacy rows are treated as not-suppressed.)
+        //
+        // #8: when a filter tab is active the explicit selection takes over — category and
+        // action combine with OR (so "Needs Review" gathers GENERIC_OPS_UNCLEAR *and*
+        // DIGEST in one tab), and the default SUPPRESS-hide is bypassed so the
+        // Traps-Rejects tab can reveal the otherwise-hidden trap/reject rows for audit.
+        let where: SQL | undefined;
+        if (filter.hasFilter) {
+            const clauses: SQL[] = [];
+            if (filter.categories.length > 0) {
+                clauses.push(inArray(opportunities.strategicCategory, filter.categories));
+            }
+            if (filter.actions.length > 0) {
+                clauses.push(inArray(opportunities.recommendedAction, filter.actions));
+            }
+            where = clauses.length === 1 ? clauses[0] : or(...clauses);
+        } else {
+            where = or(
+                isNull(opportunities.recommendedAction),
+                ne(opportunities.recommendedAction, 'SUPPRESS'),
+            );
+        }
+
         const items = await db.query.opportunities.findMany({
-            where: or(isNull(opportunities.recommendedAction), ne(opportunities.recommendedAction, 'SUPPRESS')),
+            where,
             orderBy: [
                 desc(sql`${opportunities.recommendedAction} = 'ALERT'`),
                 sql`${opportunities.strategicScore} DESC NULLS LAST`,
