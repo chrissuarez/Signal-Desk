@@ -676,6 +676,54 @@ describe('runIngestion (fake-backed pipeline)', () => {
         expect(row?.description).toBe(SCRAPED_DESCRIPTION); // deep content preserved
         expect(row?.strategicScore).toBe(90);       // untouched
     });
+
+    it('leaves a row SHALLOW + retryable when the deep re-analysis returns NOISE (#6, Codex P2)', async () => {
+        // The production analyzer swallows a Gemini/parse failure and returns a truthy NOISE row
+        // with an EMPTY strategic block. Marking that DEEP would persist empty fields and flip the
+        // cost gate to deep-done, so the pre-Pass-1 guard would block every retry. Instead the row
+        // must keep its Pass-1 SHALLOW analysis and stay retryable.
+        const noiseDeep: AIAnalysisResult = {
+            type: 'NOISE', title: 'Unknown', company: 'Unknown', industry: 'Unknown',
+            location: 'Unknown', remoteStatus: 'Unknown', description: SCRAPED_DESCRIPTION,
+            reasons: [], concerns: ['AI Analysis failed'], strategicCategory: null,
+            strategicAnalysis: EMPTY_STRATEGIC_ANALYSIS,
+        };
+        const shallowExtracted: ExtractedOpportunity = {
+            type: 'JOB', title: 'Delivery Lead', company: 'Acme', description: 'snippet only',
+            sourceUrl: 'https://example.com/job1', reasons: [], concerns: [], strategicCategory: 'USEFUL_BRIDGE',
+            strategicAnalysis: {
+                consultancyAlignment: 55, deliveryVisibility: 45, commercialProximity: 40,
+                buyerEnvironmentFit: 35, seniorityScope: 50,
+                resourceAdminTrapRisk: 'LOW', seoComfortZoneRisk: 'LOW',
+                realRoleInterpretation: 'shallow', consultancyRelevance: 'some',
+                strategicReasons: ['shallow reason'], strategicConcerns: [], recommendedScreeningQuestions: [],
+            },
+        };
+        const { adapter: persist, rows } = makePersistDouble();
+        const deps: IngestionDeps = {
+            ...defaultDeps, persist,
+            intake: { fetchSources: async () => [SOURCES[0]!] },
+            extraction: { extract: async () => [shallowExtracted] },
+            preFilter: () => true,
+            deepScrape: { scrape: async (url): Promise<ScrapedContent> => ({ title: 't', description: SCRAPED_DESCRIPTION, url }) },
+            strategicAnalysis: { analyze: async () => [noiseDeep] },
+            costGate: { digestAlreadyExtracted: async () => false, deepAlreadyDone: defaultDeps.costGate.deepAlreadyDone },
+            sendAlert: async () => {},
+            loadGuardrails: async () => DEFAULT_GUARDRAILS,
+            loadPreferences: async () => ({ keywords: [], locations: [] }),
+        };
+
+        const summary = await runIngestion({}, deps);
+
+        const row = rows.get('gmail://msgA#0');
+        expect(summary.deepAnalyzed).toBe(0);                 // NOISE is not a completed deep analysis
+        expect(row?.analysisDepth).toBe('SHALLOW');           // left retryable, not marked DEEP
+        expect(row?.consultancyAlignment).toBe(55);           // Pass-1 strategic block preserved, not emptied
+        expect(row?.description).toBe('snippet only');        // not overwritten by the NOISE deep result
+        expect(summary.errors.some((e) => e.stage === 'deepScrape')).toBe(true); // failure surfaced
+        // The cost gate now allows a retry: a SHALLOW row is not deep-done.
+        expect(defaultDeps.costGate.deepAlreadyDone(row)).toBe(false);
+    });
 });
 
 describe('mergeGuardrailSettings (#5)', () => {
