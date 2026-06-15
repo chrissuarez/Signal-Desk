@@ -61,7 +61,7 @@ const DEFAULT_PREFERENCES: IngestionPreferences = {
 };
 
 /** Production preferences loader: the `user_preferences` settings row, with a fallback. */
-const dbLoadPreferences = async (): Promise<IngestionPreferences> => {
+export const dbLoadPreferences = async (): Promise<IngestionPreferences> => {
     const prefsRecord = await db.query.settings.findFirst({
         where: eq(settings.key, 'user_preferences'),
     });
@@ -104,7 +104,7 @@ const toStringList = (value: unknown, fallback: string[]): string[] => {
 };
 
 /** Production Guardrail-inputs loader: the `strategic_guardrails` settings row, merged with defaults. */
-const dbLoadGuardrails = async (): Promise<GuardrailSettings> => {
+export const dbLoadGuardrails = async (): Promise<GuardrailSettings> => {
     const record = await db.query.settings.findFirst({
         where: eq(settings.key, 'strategic_guardrails'),
     });
@@ -204,6 +204,95 @@ const reconcileScoreAndCategory = (args: {
     return { strategicScore: guard.score, strategicCategory, guardrailConcerns: guard.concerns };
 };
 
+/** The LLM-judged identity + strategic block a single Pass-1 analysis runs over. */
+export interface StrategicPassAnalysis {
+    title: string;
+    description: string;
+    industry?: string | undefined;
+    location?: string | undefined;
+    /** LLM-proposed Strategic Category (#2), reconciled against the capped score here. */
+    strategicCategory: StrategicCategory | null;
+    /** Validated LLM Strategic Analysis block (#3). */
+    strategicAnalysis: import('../engine/strategicAnalysis.js').StrategicAnalysis;
+}
+
+/** The persisted strategic decision a Pass-1 analysis produces. */
+export interface StrategicPassResult {
+    fitScore: number;
+    scoredReasons: string[];
+    scoredConcerns: string[];
+    /** The strategic block as persisted: the LLM block + the Fit-sourced Practical Fit. */
+    strategicFields: StrategicPassAnalysis['strategicAnalysis'] & { practicalFit: number };
+    strategicScore: number | null;
+    strategicCategory: StrategicCategory | null;
+    recommendedAction: import('./ingestion/types.js').RecommendedAction;
+    guardrailConcerns: string[];
+}
+
+/**
+ * The Pass-1 strategic core, shared by live ingestion and the #9 SHALLOW backfill so they
+ * provably reuse one engine path (Fit Score → Practical Fit → Strategic Score → #5 Guardrails
+ * + Category reconcile → Recommended Action routing). Pure save for the injected scorer.
+ *
+ * `scoringText` is the text the Fit scorer reads (live: the digest body; backfill: the stored
+ * description), kept separate from `analysis.description` (the snippet the score Guardrails veto
+ * on) so the live behaviour — scoring the body, vetoing on the snippet — is preserved exactly.
+ */
+export const runStrategicPass = (args: {
+    analysis: StrategicPassAnalysis;
+    scoringText: string;
+    preferences: IngestionPreferences;
+    guardrails: GuardrailSettings;
+    scoreReconcile: ScoreReconcile;
+}): StrategicPassResult => {
+    const { analysis, scoringText, preferences, guardrails, scoreReconcile } = args;
+
+    const scored = scoreReconcile({
+        title: analysis.title,
+        description: scoringText,
+        ...(analysis.industry !== undefined ? { industry: analysis.industry } : {}),
+        ...(analysis.location !== undefined ? { location: analysis.location } : {}),
+        preferences,
+    });
+    // Strategic Analysis fields (#3): the LLM-judged block plus the Practical Fit Component
+    // Score sourced from the Fit Score. The headline Strategic Score (#4) is computed here.
+    const strategicFields = {
+        ...analysis.strategicAnalysis,
+        practicalFit: scored.fitScore,
+    };
+    const computedScore = computeStrategicScore(strategicFields);
+
+    // #5 (ADR-0002): Guardrails bound the score, then the LLM category is reconciled against
+    // the capped score + risk flags (see reconcileScoreAndCategory).
+    const reconciled = reconcileScoreAndCategory({
+        strategicScore: computedScore,
+        llmCategory: analysis.strategicCategory,
+        strategicFields,
+        industry: analysis.industry,
+        title: analysis.title,
+        description: analysis.description,
+        guardrails,
+    });
+
+    const recommendedAction = decideRecommendedAction(reconciledToSignals({
+        strategicScore: reconciled.strategicScore,
+        category: reconciled.strategicCategory,
+        seoComfortZoneRisk: strategicFields.seoComfortZoneRisk,
+        resourceAdminTrapRisk: strategicFields.resourceAdminTrapRisk,
+    }));
+
+    return {
+        fitScore: scored.fitScore,
+        scoredReasons: scored.reasons,
+        scoredConcerns: scored.concerns,
+        strategicFields,
+        strategicScore: reconciled.strategicScore,
+        strategicCategory: reconciled.strategicCategory,
+        recommendedAction,
+        guardrailConcerns: reconciled.guardrailConcerns,
+    };
+};
+
 /** Run the per-opportunity pipeline for one extracted opportunity, mutating `summary`. */
 const processOpportunity = async (
     deps: IngestionDeps,
@@ -235,51 +324,25 @@ const processOpportunity = async (
         return;
     }
 
-    const scored = deps.scoreReconcile({
-        title: analysis.title,
-        description: body,
-        ...(analysis.industry !== undefined ? { industry: analysis.industry } : {}),
-        ...(analysis.location !== undefined ? { location: analysis.location } : {}),
+    // PASS 1: the shared strategic core (#9) — Fit Score → Practical Fit → Strategic Score (#4)
+    // → #5 Guardrails + Category reconcile → Recommended Action routing. The scorer reads the
+    // digest `body` while the Guardrails veto on the extracted snippet (`analysis.description`).
+    // ADR-0005 (#13): ingestion writes the system's `recommendedAction` and no longer writes
+    // `status` — `status` is now purely the user's lifecycle field. The same core runs the #9
+    // SHALLOW backfill, so live and backfill can never drift.
+    const pass = runStrategicPass({
+        analysis,
+        scoringText: body,
         preferences,
-    });
-    // Strategic Analysis fields (#3): the LLM-judged block persisted raw, plus the
-    // Practical Fit Component Score sourced from the Fit Score (not the LLM). The
-    // headline Strategic Score (#4, ADR-0001) is computed from that block here and
-    // persisted alongside it — the ranking authority that replaces the Fit Score.
-    const strategicFields = {
-        ...analysis.strategicAnalysis,
-        practicalFit: scored.fitScore,
-    };
-    const computedScore = computeStrategicScore(strategicFields);
-
-    // #5 (ADR-0002): deterministic Guardrails (excluded-industry veto, penalty cap, tier-1
-    // floor) bound the computed score, then the LLM-proposed category is reconciled against
-    // the *capped* score + risk flags by fixed precedence. The reconciled category + capped
-    // score are what we persist and route on.
-    const reconciled = reconcileScoreAndCategory({
-        strategicScore: computedScore,
-        llmCategory: analysis.strategicCategory,
-        strategicFields,
-        industry: analysis.industry,
-        title: analysis.title,
-        description: analysis.description,
         guardrails,
+        scoreReconcile: deps.scoreReconcile,
     });
-    const strategicScore = reconciled.strategicScore;
-    const strategicCategory = reconciled.strategicCategory;
-
-    // ADR-0005 (#13): ingestion writes the system's `recommendedAction` and no longer
-    // writes `status` — `status` is now purely the user's lifecycle field. ADR-0001 (#4):
-    // routing follows the (Guardrail-capped) Strategic Score (null → 0, i.e. un-scored never
-    // alerts). #5: it also follows the *reconciled* category + risk flags — a confirmed
-    // RESOURCE_ADMIN_TRAP/REJECT SUPPRESSes and an SEO comfort zone STOREs, rather than
-    // slipping through the score-only arm, so a bad row can never ALERT on a high raw score.
-    let recommendedAction = decideRecommendedAction(reconciledToSignals({
-        strategicScore,
-        category: strategicCategory,
-        seoComfortZoneRisk: strategicFields.seoComfortZoneRisk,
-        resourceAdminTrapRisk: strategicFields.resourceAdminTrapRisk,
-    }));
+    const scored = { fitScore: pass.fitScore, reasons: pass.scoredReasons, concerns: pass.scoredConcerns };
+    const strategicFields = pass.strategicFields;
+    const strategicScore = pass.strategicScore;
+    const strategicCategory = pass.strategicCategory;
+    const reconciled = { guardrailConcerns: pass.guardrailConcerns };
+    let recommendedAction = pass.recommendedAction;
 
     const insertedRow = await deps.persist.upsertByCanonicalUrl({
         type: analysis.type,
