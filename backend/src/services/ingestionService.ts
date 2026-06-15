@@ -525,7 +525,11 @@ export const runIngestion = async (
     let preferences: IngestionPreferences;
     let guardrails: GuardrailSettings;
     try {
-        sources = await deps.intake.fetchSources('Job Alerts', limit);
+        // Honour the configurable GMAIL_LABEL (documented in .env.example / README) instead of
+        // hard-coding 'Job Alerts' — the literal here was overriding the env-driven default that
+        // gmailIngestion.listMessages already provides, so a custom label was silently ignored
+        // and the user saw nothing ingested. Falls back to 'Job Alerts' when unset.
+        sources = await deps.intake.fetchSources(process.env.GMAIL_LABEL || 'Job Alerts', limit);
         summary.sourcesSeen = sources.length;
         preferences = await deps.loadPreferences();
         guardrails = await deps.loadGuardrails();
