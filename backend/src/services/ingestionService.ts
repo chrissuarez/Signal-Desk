@@ -22,7 +22,7 @@ import { settings } from '../db/schema.js';
 import { eq } from 'drizzle-orm';
 import { dbPersist, type PersistAdapter, type OpportunityRow } from './ingestion/persist.js';
 import { gmailIntake, type IntakeAdapter } from './ingestion/intake.js';
-import { defaultExtraction, isHeuristicFallback, type ExtractionAdapter } from './ingestion/extraction.js';
+import { defaultExtraction, isHeuristicFallback, NO_API_KEY_CONCERN, type ExtractionAdapter } from './ingestion/extraction.js';
 import { httpDeepScrape, type DeepScrapeAdapter } from './ingestion/deepScrape.js';
 import { aiStrategicAnalysis, type StrategicAnalysisAdapter } from './ingestion/strategicAnalysis.js';
 import { dbCostGate, type CostGate } from './ingestion/costGate.js';
@@ -307,9 +307,15 @@ const processOpportunity = async (
     const { messageId, from, body, internalDate } = source;
     const canonicalUrl = `gmail://${messageId}#${index}`;
 
-    // Dedup: skip an opportunity already persisted in a prior run (unless forced).
+    // Dedup: skip an opportunity already persisted in a prior run (unless forced). A no-key
+    // heuristic placeholder (carrying NO_API_KEY_CONCERN) is the exception — it must be
+    // reprocessed so a later keyed run replaces it with the genuine AI extraction before the
+    // digest is finalized (#12, Codex P2); otherwise dedup would skip it, the marker would be
+    // written, and a single-opportunity digest would stay permanently heuristic once the key is
+    // restored. A still-no-key run just rewrites the same heuristic row (idempotent upsert).
     const existing = await deps.persist.findByCanonicalUrl(canonicalUrl);
-    if (existing && !force) {
+    const existingIsHeuristicFallback = existing?.concerns?.includes(NO_API_KEY_CONCERN) ?? false;
+    if (existing && !force && !existingIsHeuristicFallback) {
         console.log(`Opportunity ${canonicalUrl} already processed. Skipping.`);
         return;
     }

@@ -909,6 +909,60 @@ describe('runIngestion (fake-backed pipeline)', () => {
         expect(rows.get('gmail://msgA#0')?.title).toBe('Engineer');
         expect(marked.has('msgA')).toBe(true);    // genuine AI extraction → now marked
     });
+
+    it('reprocesses a persisted no-key heuristic row on the later keyed run before finalizing (#12, Codex P2)', async () => {
+        // A no-key run that classified the digest as a JOB persists gmail://msgA#0 with the
+        // heuristic data (carrying NO_API_KEY_CONCERN) and leaves the digest unmarked. On the
+        // later keyed run, ordinary dedup would skip that existing canonical URL — so the row
+        // would never be replaced with the genuine AI extraction, yet the marker would be written,
+        // stranding a single-opportunity digest on heuristic data forever. The heuristic row must
+        // instead be reprocessed (upgraded) before the digest is finalized.
+        const marked = new Set<string>();
+        const { adapter: persist, rows } = makePersistDouble();
+        const heuristicJob: ExtractedOpportunity = {
+            type: 'JOB', title: 'Weekly listings', company: 'Unknown', description: 'digest body',
+            sourceUrl: null, reasons: [], concerns: [NO_API_KEY_CONCERN], strategicCategory: null,
+            strategicAnalysis: EMPTY_STRATEGIC_ANALYSIS,
+        };
+        const aiJob: ExtractedOpportunity = {
+            type: 'JOB', title: 'Senior Engineer', company: 'Acme', description: 'A real role',
+            sourceUrl: null, reasons: ['ai reason'], concerns: [], strategicCategory: null,
+            strategicAnalysis: EMPTY_STRATEGIC_ANALYSIS,
+        };
+        let keyed = false;
+        const deps: IngestionDeps = {
+            ...defaultDeps, persist,
+            intake: { fetchSources: async () => [SOURCES[0]!] },
+            extraction: { extract: async () => (keyed ? [aiJob] : [heuristicJob]) },
+            costGate: {
+                digestAlreadyExtracted: async (id) => marked.has(id),
+                markDigestExtracted: async (id) => { marked.add(id); },
+                deepAlreadyDone: () => false,
+            },
+            sendAlert: async () => {},
+            loadGuardrails: async () => DEFAULT_GUARDRAILS,
+            loadPreferences: async () => ({ keywords: ['engineer'], locations: [] }),
+        };
+
+        // Run 1 (no key): heuristic row persisted, digest left unmarked.
+        await runIngestion({}, deps);
+        expect(rows.get('gmail://msgA#0')?.title).toBe('Weekly listings');
+        expect(rows.get('gmail://msgA#0')?.concerns).toContain(NO_API_KEY_CONCERN);
+        expect(marked.has('msgA')).toBe(false);
+
+        // Run 2 (keyed, NON-force): the heuristic row is reprocessed — not skipped — and replaced
+        // with the genuine AI extraction; only then is the digest finalized.
+        keyed = true;
+        const second = await runIngestion({}, deps);
+        expect(second.costSkipped).toBe(0);
+        expect(rows.get('gmail://msgA#0')?.title).toBe('Senior Engineer');        // upgraded
+        expect(rows.get('gmail://msgA#0')?.concerns).not.toContain(NO_API_KEY_CONCERN);
+        expect(marked.has('msgA')).toBe(true);                                     // now finalized
+
+        // Run 3 (keyed): the upgraded row is a genuine extraction, so ordinary dedup applies again.
+        const third = await runIngestion({}, deps);
+        expect(third.costSkipped).toBe(1);   // marker now skips the whole digest
+    });
 });
 
 describe('mergeGuardrailSettings (#5)', () => {
