@@ -43,6 +43,13 @@
       "when": 1781520156787,
       "tag": "0005_chubby_bill_hollister",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1781538829469,
+      "tag": "0006_lively_hawkeye",
+      "breakpoints": true
     }
   ]
 }

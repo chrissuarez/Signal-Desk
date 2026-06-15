@@ -10,20 +10,31 @@
  */
 
 import { db } from '../../db/index.js';
-import { opportunities } from '../../db/schema.js';
+import { digestExtractions } from '../../db/schema.js';
 import { eq } from 'drizzle-orm';
 import type { OpportunityRow } from './persist.js';
 
 export interface CostGate {
   /**
-   * Pass-1 checkpoint: has this digest already been extracted?
+   * Pass-1 checkpoint: has this digest already been fully extracted?
    *
-   * KNOWN LIMITATION: proxies on the presence of the first indexed opportunity
-   * (`gmail://<messageId>#0`) as a stand-in for "digest processed". A prior run that
-   * crashed before persisting #0 will be re-extracted (re-paying the AI cost). A real
-   * per-digest completion marker replaces this in issue #12 without re-cutting the seam.
+   * Reads a per-digest completion marker (the `digest_extractions` row, #12). That row is
+   * written by `markDigestExtracted` only after every opportunity in the digest persisted
+   * cleanly — so a digest that crashed partway is reported NOT done and re-extracted on the
+   * next run, recovering the opportunities the crash never persisted. This replaced the
+   * earlier proxy (presence of opportunity `#0`), which flipped to "done" the instant the
+   * first opportunity landed and so skipped a partially-written digest forever.
    */
   digestAlreadyExtracted(messageId: string): Promise<boolean>;
+
+  /**
+   * Record that a digest has been fully extracted — the companion writer to
+   * `digestAlreadyExtracted`. The orchestrator calls this once, at the end of a digest, only
+   * when no opportunity in it errored, so the completion marker is a true "all persisted"
+   * signal rather than a "started" one. Idempotent: re-marking an already-marked digest
+   * (e.g. on a `force` re-run) is a no-op.
+   */
+  markDigestExtracted(messageId: string): Promise<void>;
 
   /**
    * Pass-2 checkpoint: has the deep step already run for this opportunity?
@@ -41,10 +52,19 @@ export interface CostGate {
 /** Drizzle-backed Cost Gate (today's behaviour). */
 export const dbCostGate: CostGate = {
   async digestAlreadyExtracted(messageId) {
-    const proxy = await db.query.opportunities.findFirst({
-      where: eq(opportunities.canonicalUrl, `gmail://${messageId}#0`),
+    const marker = await db.query.digestExtractions.findFirst({
+      where: eq(digestExtractions.messageId, messageId),
     });
-    return proxy !== undefined;
+    return marker !== undefined;
+  },
+
+  async markDigestExtracted(messageId) {
+    // onConflictDoNothing keeps this idempotent: a `force` re-run (which bypasses the read
+    // check) re-marks a digest it already completed without erroring on the primary key.
+    await db
+      .insert(digestExtractions)
+      .values({ messageId })
+      .onConflictDoNothing({ target: digestExtractions.messageId });
   },
 
   deepAlreadyDone(existing) {

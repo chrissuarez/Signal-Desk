@@ -129,6 +129,7 @@ const makeDeps = (alerted: OpportunityRow[]) => {
         strategicAnalysis: { analyze: async () => [FINAL_ANALYSIS] },
         costGate: {
             digestAlreadyExtracted: async (id) => id === 'msgB',
+            markDigestExtracted: async () => {},
             deepAlreadyDone: () => false,
         },
         sendAlert: async (row) => { alerted.push(row); },
@@ -246,7 +247,7 @@ describe('runIngestion (fake-backed pipeline)', () => {
             persist,
             intake: { fetchSources: async () => [SOURCES[0]!] },
             extraction: { extract: async () => [standout] },
-            costGate: { digestAlreadyExtracted: async () => false, deepAlreadyDone: () => false },
+            costGate: { digestAlreadyExtracted: async () => false, markDigestExtracted: async () => {}, deepAlreadyDone: () => false },
             sendAlert: async (row) => { alerted.push(row); },
             loadGuardrails: async () => DEFAULT_GUARDRAILS,
             loadPreferences: async () => ({ keywords: ['engineer'], locations: [], locationWeights: {} }),
@@ -301,7 +302,7 @@ describe('runIngestion (fake-backed pipeline)', () => {
             preFilter: () => true, // force Pass 2; the gate's matching is unit-tested separately
             deepScrape: { scrape: async (url): Promise<ScrapedContent> => ({ title: 't', description: SCRAPED_DESCRIPTION, url }) },
             strategicAnalysis: { analyze: async () => [promoteFinal] },
-            costGate: { digestAlreadyExtracted: async () => false, deepAlreadyDone: () => false },
+            costGate: { digestAlreadyExtracted: async () => false, markDigestExtracted: async () => {}, deepAlreadyDone: () => false },
             sendAlert: async (row) => { alerted.push(row); },
             loadGuardrails: async () => DEFAULT_GUARDRAILS,
             loadPreferences: async () => ({ keywords: ['engineer'], locations: ['remote'], locationWeights: {} }),
@@ -345,7 +346,7 @@ describe('runIngestion (fake-backed pipeline)', () => {
             extraction: { extract: async () => [alertExtracted] },
             preFilter: () => true, // force Pass 2; the gate's matching is unit-tested separately
             deepScrape: { scrape: async () => { throw new Error('boom: scrape timed out'); } },
-            costGate: { digestAlreadyExtracted: async () => false, deepAlreadyDone: () => false },
+            costGate: { digestAlreadyExtracted: async () => false, markDigestExtracted: async () => {}, deepAlreadyDone: () => false },
             sendAlert: async (row) => { alerted.push(row); },
             loadGuardrails: async () => DEFAULT_GUARDRAILS,
             loadPreferences: async () => ({ keywords: ['engineer'], locations: ['remote'], locationWeights: {} }),
@@ -390,7 +391,7 @@ describe('runIngestion (fake-backed pipeline)', () => {
             ...defaultDeps, persist,
             intake: { fetchSources: async () => [SOURCES[0]!] },
             extraction: { extract: async () => [trapRow] },
-            costGate: { digestAlreadyExtracted: async () => false, deepAlreadyDone: () => false },
+            costGate: { digestAlreadyExtracted: async () => false, markDigestExtracted: async () => {}, deepAlreadyDone: () => false },
             sendAlert: async () => {},
             loadGuardrails: async () => DEFAULT_GUARDRAILS,
             loadPreferences: async () => ({ keywords: [], locations: [] }),
@@ -424,7 +425,7 @@ describe('runIngestion (fake-backed pipeline)', () => {
             ...defaultDeps, persist,
             intake: { fetchSources: async () => [SOURCES[0]!] },
             extraction: { extract: async () => [excludedRow] },
-            costGate: { digestAlreadyExtracted: async () => false, deepAlreadyDone: () => false },
+            costGate: { digestAlreadyExtracted: async () => false, markDigestExtracted: async () => {}, deepAlreadyDone: () => false },
             sendAlert: async () => {},
             loadGuardrails: async () => DEFAULT_GUARDRAILS,
             loadPreferences: async () => ({ keywords: [], locations: [] }),
@@ -459,7 +460,7 @@ describe('runIngestion (fake-backed pipeline)', () => {
                     }];
                 },
             },
-            costGate: { digestAlreadyExtracted: async () => false, deepAlreadyDone: () => false },
+            costGate: { digestAlreadyExtracted: async () => false, markDigestExtracted: async () => {}, deepAlreadyDone: () => false },
             sendAlert: async () => {},
             loadGuardrails: async () => DEFAULT_GUARDRAILS,
             loadPreferences: async () => ({ keywords: ['engineer'], locations: [] }),
@@ -515,7 +516,7 @@ describe('runIngestion (fake-backed pipeline)', () => {
             preFilter: () => true, // force Pass 2 regardless of Fit Score
             deepScrape: { scrape: async (url): Promise<ScrapedContent> => ({ title: 't', description: SCRAPED_DESCRIPTION, url }) },
             strategicAnalysis: { analyze: async () => [strongDeepNoIndustry] },
-            costGate: { digestAlreadyExtracted: async () => false, deepAlreadyDone: () => false },
+            costGate: { digestAlreadyExtracted: async () => false, markDigestExtracted: async () => {}, deepAlreadyDone: () => false },
             sendAlert: async () => {},
             loadGuardrails: async () => DEFAULT_GUARDRAILS,
             loadPreferences: async () => ({ keywords: [], locations: [] }),
@@ -567,7 +568,7 @@ describe('runIngestion (fake-backed pipeline)', () => {
             preFilter: () => true, // force Pass 2 regardless of Fit Score
             deepScrape: { scrape: async (url): Promise<ScrapedContent> => ({ title: 't', description: SCRAPED_DESCRIPTION, url }) },
             strategicAnalysis: { analyze: async () => [strongDeepBroadLabel] },
-            costGate: { digestAlreadyExtracted: async () => false, deepAlreadyDone: () => false },
+            costGate: { digestAlreadyExtracted: async () => false, markDigestExtracted: async () => {}, deepAlreadyDone: () => false },
             sendAlert: async () => {},
             loadGuardrails: async () => DEFAULT_GUARDRAILS,
             loadPreferences: async () => ({ keywords: [], locations: [] }),
@@ -618,7 +619,7 @@ describe('runIngestion (fake-backed pipeline)', () => {
             preFilter: () => true,
             deepScrape: { scrape: async (url): Promise<ScrapedContent> => ({ title: 't', description: SCRAPED_DESCRIPTION, url }) },
             strategicAnalysis: { analyze: async () => [cleanDeep] },
-            costGate: { digestAlreadyExtracted: async () => false, deepAlreadyDone: () => false },
+            costGate: { digestAlreadyExtracted: async () => false, markDigestExtracted: async () => {}, deepAlreadyDone: () => false },
             sendAlert: async () => {},
             loadGuardrails: async () => DEFAULT_GUARDRAILS,
             loadPreferences: async () => ({ keywords: [], locations: [] }),
@@ -659,7 +660,7 @@ describe('runIngestion (fake-backed pipeline)', () => {
             deepScrape: { scrape: async (url): Promise<ScrapedContent> => ({ title: 't', description: SCRAPED_DESCRIPTION, url }) },
             strategicAnalysis: { analyze: async () => [FINAL_ANALYSIS] },
             // Real deepAlreadyDone (keys on analysisDepth); only the digest extraction gate is faked.
-            costGate: { digestAlreadyExtracted: async () => false, deepAlreadyDone: defaultDeps.costGate.deepAlreadyDone },
+            costGate: { digestAlreadyExtracted: async () => false, markDigestExtracted: async () => {}, deepAlreadyDone: defaultDeps.costGate.deepAlreadyDone },
             sendAlert: async () => {},
             loadGuardrails: async () => DEFAULT_GUARDRAILS,
             loadPreferences: async () => ({ keywords: [], locations: [] }),
@@ -707,7 +708,7 @@ describe('runIngestion (fake-backed pipeline)', () => {
             preFilter: () => true,
             deepScrape: { scrape: async (url): Promise<ScrapedContent> => ({ title: 't', description: SCRAPED_DESCRIPTION, url }) },
             strategicAnalysis: { analyze: async () => [noiseDeep] },
-            costGate: { digestAlreadyExtracted: async () => false, deepAlreadyDone: defaultDeps.costGate.deepAlreadyDone },
+            costGate: { digestAlreadyExtracted: async () => false, markDigestExtracted: async () => {}, deepAlreadyDone: defaultDeps.costGate.deepAlreadyDone },
             sendAlert: async () => {},
             loadGuardrails: async () => DEFAULT_GUARDRAILS,
             loadPreferences: async () => ({ keywords: [], locations: [] }),
@@ -723,6 +724,98 @@ describe('runIngestion (fake-backed pipeline)', () => {
         expect(summary.errors.some((e) => e.stage === 'deepScrape')).toBe(true); // failure surfaced
         // The cost gate now allows a retry: a SHALLOW row is not deep-done.
         expect(defaultDeps.costGate.deepAlreadyDone(row)).toBe(false);
+    });
+
+    it('marks a cleanly-extracted digest and skips it on the next run via the marker (#12)', async () => {
+        // A digest whose opportunities all persist without error is marked extracted; a second
+        // run reads that completion marker and cost-skips the whole digest — no repeat
+        // extraction LLM call. This is the happy-path the marker must preserve.
+        const marked = new Set<string>();
+        const { adapter: persist, rows } = makePersistDouble();
+        const job: ExtractedOpportunity = {
+            type: 'JOB', title: 'Engineer', company: 'Acme', description: 'A role',
+            sourceUrl: null, reasons: [], concerns: [], strategicCategory: null,
+            strategicAnalysis: EMPTY_STRATEGIC_ANALYSIS,
+        };
+        let extractCalls = 0;
+        const deps: IngestionDeps = {
+            ...defaultDeps, persist,
+            intake: { fetchSources: async () => [SOURCES[0]!] },
+            extraction: { extract: async () => { extractCalls++; return [job]; } },
+            costGate: {
+                digestAlreadyExtracted: async (id) => marked.has(id),
+                markDigestExtracted: async (id) => { marked.add(id); },
+                deepAlreadyDone: () => false,
+            },
+            sendAlert: async () => {},
+            loadGuardrails: async () => DEFAULT_GUARDRAILS,
+            loadPreferences: async () => ({ keywords: ['engineer'], locations: [] }),
+        };
+
+        const first = await runIngestion({}, deps);
+        expect(first.created).toBe(1);
+        expect(extractCalls).toBe(1);
+        expect(marked.has('msgA')).toBe(true);    // clean digest → marked extracted
+
+        const second = await runIngestion({}, deps);
+        expect(second.costSkipped).toBe(1);       // marker read → whole digest skipped
+        expect(second.extracted).toBe(0);
+        expect(extractCalls).toBe(1);             // no second extraction LLM call
+        expect(rows.size).toBe(1);
+    });
+
+    it('re-extracts a digest that failed after persisting #0, instead of skipping it forever (#12)', async () => {
+        // The reported bug: a prior run persisted #0 then failed before #1, so the old
+        // #0-presence proxy treated the digest as done and #1 was lost forever. With the
+        // completion marker, the half-written digest is left UNMARKED — so the next run does
+        // not skip it: it re-extracts and recovers #1.
+        const marked = new Set<string>();
+        const { adapter: realPersist, rows } = makePersistDouble();
+        // Persist double that throws on opportunity #1 during the first run only, simulating a
+        // crash after #0 landed but before the rest of the digest was written.
+        let failSecondOpportunity = true;
+        const persist: PersistAdapter = {
+            ...realPersist,
+            async upsertByCanonicalUrl(values, conflictSet) {
+                if (failSecondOpportunity && values.canonicalUrl === 'gmail://msgA#1') {
+                    throw new Error('boom: persist crashed after #0');
+                }
+                return realPersist.upsertByCanonicalUrl(values, conflictSet);
+            },
+        };
+        const mkJob = (title: string): ExtractedOpportunity => ({
+            type: 'JOB', title, company: 'Acme', description: 'A role',
+            sourceUrl: null, reasons: [], concerns: [], strategicCategory: null,
+            strategicAnalysis: EMPTY_STRATEGIC_ANALYSIS,
+        });
+        const twoJobs = [mkJob('Engineer Zero'), mkJob('Engineer One')];
+        const deps: IngestionDeps = {
+            ...defaultDeps, persist,
+            intake: { fetchSources: async () => [SOURCES[0]!] },
+            extraction: { extract: async () => twoJobs },
+            costGate: {
+                digestAlreadyExtracted: async (id) => marked.has(id),
+                markDigestExtracted: async (id) => { marked.add(id); },
+                deepAlreadyDone: () => false,
+            },
+            sendAlert: async () => {},
+            loadGuardrails: async () => DEFAULT_GUARDRAILS,
+            loadPreferences: async () => ({ keywords: ['engineer'], locations: [] }),
+        };
+
+        // Run 1: #0 persists, #1 throws (isolated + recorded). The digest is NOT marked.
+        const first = await runIngestion({}, deps);
+        expect(rows.get('gmail://msgA#0')?.title).toBe('Engineer Zero');
+        expect(rows.get('gmail://msgA#1')).toBeUndefined();              // lost in the crash
+        expect(first.errors.some((e) => e.canonicalUrl === 'gmail://msgA#1')).toBe(true);
+        expect(marked.has('msgA')).toBe(false);                          // half-written → unmarked
+
+        // Run 2: the gate sees no marker, so it does NOT skip — it re-extracts and recovers #1.
+        failSecondOpportunity = false;
+        const second = await runIngestion({}, deps);
+        expect(second.costSkipped).toBe(0);                              // not skipped: bug fixed
+        expect(rows.get('gmail://msgA#1')?.title).toBe('Engineer One');  // recovered
+        expect(marked.has('msgA')).toBe(true);                           // now clean → marked
     });
 });
 

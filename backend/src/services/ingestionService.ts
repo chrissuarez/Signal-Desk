@@ -550,6 +550,10 @@ export const runIngestion = async (
             const analysisResults = await deps.extraction.extract(source);
             summary.extracted += analysisResults.length;
 
+            // #12: snapshot the error count before this digest's opportunities, so we can
+            // tell whether the whole digest persisted cleanly before marking it complete.
+            const errorsBeforeDigest = summary.errors.length;
+
             for (const [i, analysis] of analysisResults.entries()) {
                 if (analysis.type === 'NOISE') continue;
                 try {
@@ -561,6 +565,17 @@ export const runIngestion = async (
                         canonicalUrl: `gmail://${source.messageId}#${i}`,
                     }, error);
                 }
+            }
+
+            // COST GATE completion (#12): write the per-digest "fully extracted" marker only
+            // if every opportunity in this digest persisted without error. A crash mid-digest
+            // never reaches this line, and an isolated per-opportunity failure leaves the
+            // count raised — so in either case the marker stays unwritten and the next run
+            // re-extracts to recover the missing opportunities, instead of the old #0-proxy
+            // skipping a partially-written digest forever. A clean all-NOISE digest (no
+            // opportunities, no errors) is still marked, so newsletters aren't re-extracted.
+            if (summary.errors.length === errorsBeforeDigest) {
+                await deps.costGate.markDigestExtracted(source.messageId);
             }
         } catch (error) {
             recordError(summary, { stage: 'source', messageId: source.messageId }, error);
