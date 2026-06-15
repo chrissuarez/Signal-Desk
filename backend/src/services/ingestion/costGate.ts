@@ -84,29 +84,28 @@ export const dbCostGate: CostGate = {
  * code. `initWorker` calls this at startup. Idempotent via ON CONFLICT DO NOTHING, and the
  * caller skips it once any marker exists, so it does real work at most once.
  *
- * A digest with any persisted opportunity completed extraction under the old code, so its
- * messageId — the `canonical_url` between `gmail://` and the trailing `#<index>` — is marked
- * done. Legacy partially-failed digests (the bug this release fixes) keep whatever rows they
- * have; their never-persisted opportunities aren't reconstructable. Returns the count seeded.
+ * The seed mirrors the OLD completion signal exactly: the old proxy reported a digest done iff
+ * its `gmail://<msg>#0` row existed, so we seed a marker for precisely those messageIds. Keying
+ * on `#0` (not "any row") preserves the one case the old proxy left recoverable — a legacy
+ * partial that failed on `#0` but persisted a later `#1` had no `#0` row, so the old code
+ * re-extracted it to recover the missing first opportunity; seeding "any row" would instead mark
+ * it done and strand `#0`. Never-persisted opportunities of a digest that DID have `#0` aren't
+ * reconstructable (and weren't under the old code either). Returns the count seeded.
  *
- * Exception (#12, Codex P2): a digest whose rows came from the no-key heuristic fallback (any
- * row carrying NO_API_KEY_CONCERN) is NOT seeded. Marking it would make the first keyed run
- * skip it at the pre-extraction `digestAlreadyExtracted` check — before the per-opportunity
- * reprocess path that upgrades a heuristic row can run — leaving it stranded on heuristic data
- * forever. Left unseeded, that digest re-extracts and the keyed run replaces the placeholder.
+ * Also excluded (#12, Codex P2): a `#0` row from the no-key heuristic fallback (carrying
+ * NO_API_KEY_CONCERN — the fallback only ever produces `#0`). Marking it would make the first
+ * keyed run skip the digest at the pre-extraction `digestAlreadyExtracted` check, before the
+ * per-opportunity reprocess path that upgrades a heuristic row can run — stranding it on
+ * heuristic data. Left unseeded, that digest re-extracts and the keyed run replaces the placeholder.
  */
 export const seedDigestMarkersFromLegacy = async (): Promise<number> => {
   const result = await db.execute(sql`
     INSERT INTO digest_extractions (message_id)
-    SELECT msg FROM (
-      SELECT substring(canonical_url from 'gmail://(.*)#[0-9]+$') AS msg,
-             bool_or(concerns IS NOT NULL AND jsonb_exists(concerns, ${NO_API_KEY_CONCERN})) AS has_fallback
-      FROM opportunities
-      WHERE canonical_url LIKE 'gmail://%#%'
-        AND substring(canonical_url from 'gmail://(.*)#[0-9]+$') IS NOT NULL
-      GROUP BY 1
-    ) digests
-    WHERE msg IS NOT NULL AND NOT has_fallback
+    SELECT substring(canonical_url from '^gmail://(.*)#0$')
+    FROM opportunities
+    WHERE canonical_url ~ '^gmail://.*#0$'
+      AND substring(canonical_url from '^gmail://(.*)#0$') IS NOT NULL
+      AND NOT (concerns IS NOT NULL AND jsonb_exists(concerns, ${NO_API_KEY_CONCERN}))
     ON CONFLICT (message_id) DO NOTHING
   `);
   return result.rowCount ?? 0;
