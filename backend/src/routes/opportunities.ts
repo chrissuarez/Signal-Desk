@@ -34,9 +34,19 @@ router.get('/', async (req, res) => {
             }
             where = clauses.length === 1 ? clauses[0] : or(...clauses);
         } else {
+            // Default view hides SUPPRESS rows (ADR-0005) — EXCEPT ones the user has
+            // positively engaged with (SAVED/APPLIED). A user can like a suppressed
+            // trap/reject straight from the #8 Traps-Rejects tab: that sets status=SAVED but
+            // leaves recommendedAction=SUPPRESS, and the Liked tab reads *this* default view
+            // and filters it by status client-side — so without this carve-out the just-liked
+            // row would be excluded here before that filter runs and vanish from Liked. The
+            // user's lifecycle intent outranks system suppression (mirrors #9's backfill rule,
+            // applied here at read time); this also keeps a SAVED row visible if a later
+            // Pass-2 reprocess demotes it to SUPPRESS.
             where = or(
                 isNull(opportunities.recommendedAction),
                 ne(opportunities.recommendedAction, 'SUPPRESS'),
+                inArray(opportunities.status, ['SAVED', 'APPLIED']),
             );
         }
 
