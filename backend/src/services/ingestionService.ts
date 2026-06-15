@@ -225,6 +225,16 @@ const processOpportunity = async (
         return;
     }
 
+    // #6: a row already at DEEP analysis depth is at its best read. A forced reprocess re-runs
+    // Pass 1, which would overwrite it with a snippet-level (SHALLOW) analysis — and the deep
+    // pass is cost-gated from re-running — so leave it untouched rather than silently downgrade
+    // its depth + scraped content. The deep cost gate runs here (depth is known before Pass 1),
+    // not just at the Pass-2 scrape: skipping the whole reprocess is what preserves the deep row.
+    if (deps.costGate.deepAlreadyDone(existing)) {
+        console.log(`Opportunity ${canonicalUrl} already deep-analyzed (DEEP). Preserving analysis.`);
+        return;
+    }
+
     const scored = deps.scoreReconcile({
         title: analysis.title,
         description: body,
@@ -325,11 +335,15 @@ const processOpportunity = async (
     // role-family title in the title/snippet passes, unless a hard-exclude industry vetoes. The
     // gate reads the same configurable strategic_guardrails lists the score Guardrails use.
     if (deps.preFilter(
-        { title: analysis.title, description: analysis.description, industry: analysis.industry },
+        // `?? ''` (not explicit undefined) for exactOptionalPropertyTypes; '' = "no industry" (no veto).
+        { title: analysis.title, description: analysis.description, industry: analysis.industry ?? '' },
         { tier1Keywords: guardrails.tier1Keywords, excludedIndustries: guardrails.excludedIndustries },
     )) {
         summary.preFilterPassed++;
-        if (analysis.sourceUrl && !deps.costGate.deepAlreadyDone(existing)) {
+        // The deep cost gate already ran up front (a DEEP row never reaches here), so a
+        // pre-filtered row with a sourceUrl always attempts the deep pass — including a
+        // previously-SHALLOW row on reprocess, which now gets a chance to reach DEEP.
+        if (analysis.sourceUrl) {
             // Deep scrape + re-analysis is optional enrichment. A transient scrape/analysis
             // failure must not lose the Pass-1 decision or its alert — the row is already
             // persisted on the Pass-1 recommendedAction — so it is isolated here: on error we

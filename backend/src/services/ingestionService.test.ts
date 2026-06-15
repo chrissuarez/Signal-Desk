@@ -632,6 +632,50 @@ describe('runIngestion (fake-backed pipeline)', () => {
         expect(row?.recommendedAction).toBe('SUPPRESS');
         expect(row?.concerns?.some((c) => c.includes('Gambling'))).toBe(true);
     });
+
+    it('preserves a DEEP row on a forced reprocess instead of downgrading it (#6, Codex P2)', async () => {
+        // A row already deep-analysed (DEEP, full scraped description) is re-encountered on a
+        // forced run. Re-running Pass 1 would overwrite it with a snippet-level read, and the
+        // deep pass is cost-gated from re-running — so the orchestrator leaves it untouched
+        // rather than silently downgrade its depth + content to SHALLOW. Drives the REAL cost
+        // gate (deepAlreadyDone keys on analysisDepth), only digest extraction is faked.
+        const { adapter: persist, rows } = makePersistDouble();
+        const deepRow = {
+            id: 1, canonicalUrl: 'gmail://msgA#0', title: 'Delivery Lead', company: 'Acme',
+            description: SCRAPED_DESCRIPTION, fitScore: 70, strategicScore: 90,
+            analysisDepth: 'DEEP', recommendedAction: 'ALERT',
+        } as OpportunityRow;
+        rows.set('gmail://msgA#0', deepRow);
+
+        const freshShallow: ExtractedOpportunity = {
+            type: 'JOB', title: 'Delivery Lead', company: 'Acme', description: 'snippet only',
+            sourceUrl: 'https://example.com/job1', reasons: [], concerns: [],
+            strategicCategory: null, strategicAnalysis: EMPTY_STRATEGIC_ANALYSIS,
+        };
+        const deps: IngestionDeps = {
+            ...defaultDeps, persist,
+            intake: { fetchSources: async () => [SOURCES[0]!] },
+            extraction: { extract: async () => [freshShallow] },
+            deepScrape: { scrape: async (url): Promise<ScrapedContent> => ({ title: 't', description: SCRAPED_DESCRIPTION, url }) },
+            strategicAnalysis: { analyze: async () => [FINAL_ANALYSIS] },
+            // Real deepAlreadyDone (keys on analysisDepth); only the digest extraction gate is faked.
+            costGate: { digestAlreadyExtracted: async () => false, deepAlreadyDone: defaultDeps.costGate.deepAlreadyDone },
+            sendAlert: async () => {},
+            loadGuardrails: async () => DEFAULT_GUARDRAILS,
+            loadPreferences: async () => ({ keywords: [], locations: [] }),
+        };
+
+        const summary = await runIngestion({ force: true }, deps);
+
+        const row = rows.get('gmail://msgA#0');
+        expect(summary.extracted).toBe(1);          // Pass 1 still extracted it...
+        expect(summary.created).toBe(0);            // ...but the deep row was left untouched:
+        expect(summary.updated).toBe(0);            // no re-persist
+        expect(summary.deepAnalyzed).toBe(0);       // and no re-deepen
+        expect(row?.analysisDepth).toBe('DEEP');    // depth preserved, not downgraded to SHALLOW
+        expect(row?.description).toBe(SCRAPED_DESCRIPTION); // deep content preserved
+        expect(row?.strategicScore).toBe(90);       // untouched
+    });
 });
 
 describe('mergeGuardrailSettings (#5)', () => {
