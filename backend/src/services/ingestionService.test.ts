@@ -12,12 +12,13 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { runIngestion, defaultDeps, type IngestionDeps } from './ingestionService.js';
+import { runIngestion, defaultDeps, mergeGuardrailSettings, type IngestionDeps } from './ingestionService.js';
 import type { PersistAdapter, OpportunityRow, OpportunityInsert } from './ingestion/persist.js';
 import type { ExtractedOpportunity, RawSource } from './ingestion/types.js';
 import type { ScrapedContent } from './scraperService.js';
 import type { AIAnalysisResult } from './aiService.js';
 import { EMPTY_STRATEGIC_ANALYSIS } from '../engine/strategicAnalysis.js';
+import { DEFAULT_GUARDRAILS } from '../engine/strategicGuardrails.js';
 
 /** Minimal in-memory Persist double: a Map keyed on canonicalUrl with auto-increment ids. */
 const makePersistDouble = () => {
@@ -128,6 +129,7 @@ const makeDeps = (alerted: OpportunityRow[]) => {
             deepAlreadyDone: () => false,
         },
         sendAlert: async (row) => { alerted.push(row); },
+        loadGuardrails: async () => DEFAULT_GUARDRAILS,
         loadPreferences: async () => ({
             keywords: ['engineer', 'typescript', 'ai'],
             locations: ['remote'],
@@ -152,9 +154,10 @@ describe('runIngestion (fake-backed pipeline)', () => {
         expect(summary.deepAnalyzed).toBe(1);       // and it has a sourceUrl, so Pass 2 runs
         expect(summary.created).toBe(3);            // high + mid + low; NOISE is not persisted
         expect(summary.updated).toBe(0);
-        // Routing now follows the Strategic Score (#4): all three rows score < 80
-        // strategically, so all STORE — even the 85-Fit row. No DIGEST/SUPPRESS until #7b.
-        expect(summary.byRecommendedAction).toEqual({ ALERT: 0, DIGEST: 0, STORE: 3, SUPPRESS: 0 });
+        // Routing follows the Strategic Score (#4) AND the reconciled category (#5): no row
+        // clears the 80 alert threshold, but the high row is a mid-scoring USEFUL_BRIDGE (66)
+        // so its category arm routes it to DIGEST; mid (33 < 40) and low (null category) STORE.
+        expect(summary.byRecommendedAction).toEqual({ ALERT: 0, DIGEST: 1, STORE: 2, SUPPRESS: 0 });
         expect(summary.errors).toEqual([]);
 
         // Persisted rows: NOISE never lands; the three jobs do, at their routed action.
@@ -163,12 +166,15 @@ describe('runIngestion (fake-backed pipeline)', () => {
         const mid = rows.get('gmail://msgA#2');
         const low = rows.get('gmail://msgA#3');
 
-        // High Fit (85) but sub-threshold Strategic (66) → STORE, NOT ALERT: the #4 fix
-        // means the Fit Score no longer floats a role to the top of the dashboard.
-        expect(high?.recommendedAction).toBe('STORE');
+        // High Fit (85) but sub-threshold Strategic (66) → never ALERT: the #4 fix means the
+        // Fit Score no longer floats a role to the top of the dashboard. As a mid-scoring
+        // USEFUL_BRIDGE it routes to DIGEST (#5 category arm), not STORE.
+        expect(high?.recommendedAction).toBe('DIGEST');
         expect(high?.fitScore).toBe(85);
         expect(high?.description).toBe(SCRAPED_DESCRIPTION); // Pass 2 replaced the body
-        expect(high?.strategicCategory).toBe('STRATEGIC_FIT'); // persisted from analysis (#2)
+        // The LLM labelled it STRATEGIC_FIT, but reconciliation (#5) demotes it: the deep
+        // Strategic Score is 66 (< 70), so it can't stand as a strategic fit → USEFUL_BRIDGE.
+        expect(high?.strategicCategory).toBe('USEFUL_BRIDGE');
 
         expect(mid?.recommendedAction).toBe('STORE');        // strategic 33 < 80 → STORE
         expect(mid?.fitScore).toBe(60);
@@ -233,6 +239,7 @@ describe('runIngestion (fake-backed pipeline)', () => {
             extraction: { extract: async () => [standout] },
             costGate: { digestAlreadyExtracted: async () => false, deepAlreadyDone: () => false },
             sendAlert: async (row) => { alerted.push(row); },
+            loadGuardrails: async () => DEFAULT_GUARDRAILS,
             loadPreferences: async () => ({ keywords: ['engineer'], locations: [], locationWeights: {} }),
         };
 
@@ -285,6 +292,7 @@ describe('runIngestion (fake-backed pipeline)', () => {
             strategicAnalysis: { analyze: async () => [promoteFinal] },
             costGate: { digestAlreadyExtracted: async () => false, deepAlreadyDone: () => false },
             sendAlert: async (row) => { alerted.push(row); },
+            loadGuardrails: async () => DEFAULT_GUARDRAILS,
             loadPreferences: async () => ({ keywords: ['engineer'], locations: ['remote'], locationWeights: {} }),
         };
 
@@ -325,6 +333,7 @@ describe('runIngestion (fake-backed pipeline)', () => {
             deepScrape: { scrape: async () => { throw new Error('boom: scrape timed out'); } },
             costGate: { digestAlreadyExtracted: async () => false, deepAlreadyDone: () => false },
             sendAlert: async (row) => { alerted.push(row); },
+            loadGuardrails: async () => DEFAULT_GUARDRAILS,
             loadPreferences: async () => ({ keywords: ['engineer'], locations: ['remote'], locationWeights: {} }),
         };
 
@@ -343,6 +352,74 @@ describe('runIngestion (fake-backed pipeline)', () => {
         expect(alerted).toHaveLength(1);
         expect(alerted[0]?.strategicScore).toBe(row?.strategicScore); // carries the Pass-1 state
         expect(summary.byRecommendedAction.ALERT).toBe(1);
+    });
+
+    it('forces RESOURCE_ADMIN_TRAP when trap risk is HIGH, overriding the LLM category (#5)', async () => {
+        // The LLM proposed STRATEGIC_FIT, but an unambiguous resource-admin signal (trap risk
+        // HIGH) forces the category regardless — reconciliation precedence 1.
+        const trapRow: ExtractedOpportunity = {
+            type: 'JOB', title: 'Engineering Manager', company: 'TrapCo',
+            description: 'A role', sourceUrl: null, reasons: [], concerns: [], strategicCategory: 'STRATEGIC_FIT',
+            strategicAnalysis: {
+                consultancyAlignment: 90, deliveryVisibility: 85, commercialProximity: 80,
+                buyerEnvironmentFit: 80, seniorityScope: 85,
+                resourceAdminTrapRisk: 'HIGH', seoComfortZoneRisk: 'LOW',
+                realRoleInterpretation: 'Strong on paper but an admin trap.', consultancyRelevance: 'Low.',
+                strategicReasons: [], strategicConcerns: [], recommendedScreeningQuestions: [],
+            },
+        };
+        const { adapter: persist, rows } = makePersistDouble();
+        const deps: IngestionDeps = {
+            ...defaultDeps, persist,
+            intake: { fetchSources: async () => [SOURCES[0]!] },
+            extraction: { extract: async () => [trapRow] },
+            costGate: { digestAlreadyExtracted: async () => false, deepAlreadyDone: () => false },
+            sendAlert: async () => {},
+            loadGuardrails: async () => DEFAULT_GUARDRAILS,
+            loadPreferences: async () => ({ keywords: [], locations: [] }),
+        };
+
+        await runIngestion({}, deps);
+
+        const trapResult = rows.get('gmail://msgA#0');
+        expect(trapResult?.strategicCategory).toBe('RESOURCE_ADMIN_TRAP');
+        // #5 routing: a confirmed trap SUPPRESSes even on a high raw score — it must not ALERT
+        // through the score-only arm just because the LLM proposed STRATEGIC_FIT.
+        expect(trapResult?.recommendedAction).toBe('SUPPRESS');
+    });
+
+    it('vetoes an excluded industry: caps the Strategic Score to 0 and forces REJECT (#5)', async () => {
+        // A strong-looking role in an excluded industry: the deterministic Guardrail veto
+        // overrides the number and the LLM category — score capped to 0, category REJECT.
+        const excludedRow: ExtractedOpportunity = {
+            type: 'JOB', title: 'Engineer', company: 'BetCo', industry: 'Online Gambling',
+            description: 'A role', sourceUrl: null, reasons: [], concerns: [], strategicCategory: 'STRATEGIC_FIT',
+            strategicAnalysis: {
+                consultancyAlignment: 80, deliveryVisibility: 80, commercialProximity: 80,
+                buyerEnvironmentFit: 80, seniorityScope: 80,
+                resourceAdminTrapRisk: 'LOW', seoComfortZoneRisk: 'LOW',
+                realRoleInterpretation: 'Strong on paper.', consultancyRelevance: 'But excluded industry.',
+                strategicReasons: [], strategicConcerns: [], recommendedScreeningQuestions: [],
+            },
+        };
+        const { adapter: persist, rows } = makePersistDouble();
+        const deps: IngestionDeps = {
+            ...defaultDeps, persist,
+            intake: { fetchSources: async () => [SOURCES[0]!] },
+            extraction: { extract: async () => [excludedRow] },
+            costGate: { digestAlreadyExtracted: async () => false, deepAlreadyDone: () => false },
+            sendAlert: async () => {},
+            loadGuardrails: async () => DEFAULT_GUARDRAILS,
+            loadPreferences: async () => ({ keywords: [], locations: [] }),
+        };
+
+        await runIngestion({}, deps);
+
+        const row = rows.get('gmail://msgA#0');
+        expect(row?.strategicScore).toBe(0);             // industry veto caps the score
+        expect(row?.strategicCategory).toBe('REJECT');   // …and forces REJECT
+        expect(row?.recommendedAction).toBe('SUPPRESS'); // #5: a REJECT is hidden, not just stored
+        expect(row?.concerns?.some((c) => c.includes('Gambling'))).toBe(true);
     });
 
     it('isolates a poison source: records the failure and continues the run', async () => {
@@ -367,6 +444,7 @@ describe('runIngestion (fake-backed pipeline)', () => {
             },
             costGate: { digestAlreadyExtracted: async () => false, deepAlreadyDone: () => false },
             sendAlert: async () => {},
+            loadGuardrails: async () => DEFAULT_GUARDRAILS,
             loadPreferences: async () => ({ keywords: ['engineer'], locations: [] }),
         };
 
@@ -382,5 +460,199 @@ describe('runIngestion (fake-backed pipeline)', () => {
         expect(summary.sourcesSeen).toBe(2);
         expect(summary.created).toBe(1);
         expect(rows.get('gmail://good#0')?.title).toBe('Engineer Position');
+    });
+
+    it('keeps the excluded-industry veto through Pass 2 when the deep analysis omits industry (#5)', async () => {
+        // Pass 1 vetoes on the excluded industry, but the Fit Score clears the pre-filter so
+        // Pass 2 runs. The deep analyzer drops the industry (''), so without the Pass-1 fallback
+        // the deep re-score would un-veto the row and persist/route a high score for an excluded
+        // industry. The veto must survive enrichment: score 0, REJECT, SUPPRESS.
+        const excludedExtracted: ExtractedOpportunity = {
+            type: 'JOB', title: 'Engineer', company: 'BetCo', industry: 'Online Gambling',
+            description: 'A role', sourceUrl: 'https://example.com/x', reasons: [], concerns: [], strategicCategory: 'STRATEGIC_FIT',
+            strategicAnalysis: {
+                consultancyAlignment: 80, deliveryVisibility: 80, commercialProximity: 80,
+                buyerEnvironmentFit: 80, seniorityScope: 80,
+                resourceAdminTrapRisk: 'LOW', seoComfortZoneRisk: 'LOW',
+                realRoleInterpretation: 'Strong on paper.', consultancyRelevance: 'But excluded industry.',
+                strategicReasons: [], strategicConcerns: [], recommendedScreeningQuestions: [],
+            },
+        };
+        const strongDeepNoIndustry: AIAnalysisResult = {
+            type: 'JOB', title: 'Engineer', company: 'BetCo',
+            industry: '', location: 'Remote', remoteStatus: 'REMOTE', description: SCRAPED_DESCRIPTION,
+            reasons: ['deep'], concerns: [], strategicCategory: 'STRATEGIC_FIT',
+            strategicAnalysis: {
+                consultancyAlignment: 95, deliveryVisibility: 95, commercialProximity: 95,
+                buyerEnvironmentFit: 95, seniorityScope: 95,
+                resourceAdminTrapRisk: 'LOW', seoComfortZoneRisk: 'LOW',
+                realRoleInterpretation: 'deep', consultancyRelevance: 'strong',
+                strategicReasons: [], strategicConcerns: [], recommendedScreeningQuestions: [],
+            },
+        };
+        const { adapter: persist, rows } = makePersistDouble();
+        const deps: IngestionDeps = {
+            ...defaultDeps, persist,
+            intake: { fetchSources: async () => [SOURCES[0]!] },
+            extraction: { extract: async () => [excludedExtracted] },
+            preFilter: () => true, // force Pass 2 regardless of Fit Score
+            deepScrape: { scrape: async (url): Promise<ScrapedContent> => ({ title: 't', description: SCRAPED_DESCRIPTION, url }) },
+            strategicAnalysis: { analyze: async () => [strongDeepNoIndustry] },
+            costGate: { digestAlreadyExtracted: async () => false, deepAlreadyDone: () => false },
+            sendAlert: async () => {},
+            loadGuardrails: async () => DEFAULT_GUARDRAILS,
+            loadPreferences: async () => ({ keywords: [], locations: [] }),
+        };
+
+        const summary = await runIngestion({}, deps);
+
+        const row = rows.get('gmail://msgA#0');
+        expect(summary.deepAnalyzed).toBe(1);           // Pass 2 actually ran...
+        expect(row?.strategicScore).toBe(0);             // ...but the veto held: score still 0
+        expect(row?.strategicCategory).toBe('REJECT');   // ...and the category stays REJECT
+        expect(row?.recommendedAction).toBe('SUPPRESS'); // #5: a REJECT is hidden through Pass 2 too
+        expect(row?.concerns?.some((c) => c.includes('Gambling'))).toBe(true);
+    });
+
+    it('keeps the Pass-1 veto when the deep analysis returns a non-empty broad label (#5)', async () => {
+        // The trap-case of the test above: the deep analyzer returns a *non-empty* broad label
+        // ("Other"), not ''. A `deep || pass1` industry would let "Other" shadow the Pass-1
+        // "Online Gambling" and un-veto the row — but the persisted industry is never replaced,
+        // so the veto must still fire on the Pass-1 value: score 0, REJECT, SUPPRESS.
+        const excludedExtracted: ExtractedOpportunity = {
+            type: 'JOB', title: 'Engineer', company: 'BetCo', industry: 'Online Gambling',
+            description: 'A role', sourceUrl: 'https://example.com/x', reasons: [], concerns: [], strategicCategory: 'STRATEGIC_FIT',
+            strategicAnalysis: {
+                consultancyAlignment: 80, deliveryVisibility: 80, commercialProximity: 80,
+                buyerEnvironmentFit: 80, seniorityScope: 80,
+                resourceAdminTrapRisk: 'LOW', seoComfortZoneRisk: 'LOW',
+                realRoleInterpretation: 'Strong on paper.', consultancyRelevance: 'But excluded industry.',
+                strategicReasons: [], strategicConcerns: [], recommendedScreeningQuestions: [],
+            },
+        };
+        const strongDeepBroadLabel: AIAnalysisResult = {
+            type: 'JOB', title: 'Engineer', company: 'BetCo',
+            industry: 'Other', location: 'Remote', remoteStatus: 'REMOTE', description: SCRAPED_DESCRIPTION,
+            reasons: ['deep'], concerns: [], strategicCategory: 'STRATEGIC_FIT',
+            strategicAnalysis: {
+                consultancyAlignment: 95, deliveryVisibility: 95, commercialProximity: 95,
+                buyerEnvironmentFit: 95, seniorityScope: 95,
+                resourceAdminTrapRisk: 'LOW', seoComfortZoneRisk: 'LOW',
+                realRoleInterpretation: 'deep', consultancyRelevance: 'strong',
+                strategicReasons: [], strategicConcerns: [], recommendedScreeningQuestions: [],
+            },
+        };
+        const { adapter: persist, rows } = makePersistDouble();
+        const deps: IngestionDeps = {
+            ...defaultDeps, persist,
+            intake: { fetchSources: async () => [SOURCES[0]!] },
+            extraction: { extract: async () => [excludedExtracted] },
+            preFilter: () => true, // force Pass 2 regardless of Fit Score
+            deepScrape: { scrape: async (url): Promise<ScrapedContent> => ({ title: 't', description: SCRAPED_DESCRIPTION, url }) },
+            strategicAnalysis: { analyze: async () => [strongDeepBroadLabel] },
+            costGate: { digestAlreadyExtracted: async () => false, deepAlreadyDone: () => false },
+            sendAlert: async () => {},
+            loadGuardrails: async () => DEFAULT_GUARDRAILS,
+            loadPreferences: async () => ({ keywords: [], locations: [] }),
+        };
+
+        const summary = await runIngestion({}, deps);
+
+        const row = rows.get('gmail://msgA#0');
+        expect(summary.deepAnalyzed).toBe(1);            // Pass 2 ran with the broad-label deep result...
+        expect(row?.strategicScore).toBe(0);             // ...but "Other" did not shadow the veto
+        expect(row?.strategicCategory).toBe('REJECT');
+        expect(row?.recommendedAction).toBe('SUPPRESS');
+        expect(row?.concerns?.some((c) => c.includes('Gambling'))).toBe(true);
+    });
+
+    it('keeps a Pass-1 title-based veto when the deep analysis returns a generic title (#5)', async () => {
+        // The veto term is in the TITLE (industry is a broad "Other"), and the deep re-analysis
+        // returns a generic title + clean scraped body. The persisted title stays the Pass-1
+        // value, so the veto must still fire from the carried-over Pass-1 title: score 0, REJECT.
+        const excludedByTitle: ExtractedOpportunity = {
+            type: 'JOB', title: 'Gambling Platform Engineer', company: 'BetCo', industry: 'Other',
+            description: 'A role', sourceUrl: 'https://example.com/x', reasons: [], concerns: [], strategicCategory: 'STRATEGIC_FIT',
+            strategicAnalysis: {
+                consultancyAlignment: 80, deliveryVisibility: 80, commercialProximity: 80,
+                buyerEnvironmentFit: 80, seniorityScope: 80,
+                resourceAdminTrapRisk: 'LOW', seoComfortZoneRisk: 'LOW',
+                realRoleInterpretation: 'Strong on paper.', consultancyRelevance: 'But excluded.',
+                strategicReasons: [], strategicConcerns: [], recommendedScreeningQuestions: [],
+            },
+        };
+        const cleanDeep: AIAnalysisResult = {
+            type: 'JOB', title: 'Platform Engineer', company: 'BetCo',
+            industry: 'Other', location: 'Remote', remoteStatus: 'REMOTE', description: SCRAPED_DESCRIPTION,
+            reasons: ['deep'], concerns: [], strategicCategory: 'STRATEGIC_FIT',
+            strategicAnalysis: {
+                consultancyAlignment: 95, deliveryVisibility: 95, commercialProximity: 95,
+                buyerEnvironmentFit: 95, seniorityScope: 95,
+                resourceAdminTrapRisk: 'LOW', seoComfortZoneRisk: 'LOW',
+                realRoleInterpretation: 'deep', consultancyRelevance: 'strong',
+                strategicReasons: [], strategicConcerns: [], recommendedScreeningQuestions: [],
+            },
+        };
+        const { adapter: persist, rows } = makePersistDouble();
+        const deps: IngestionDeps = {
+            ...defaultDeps, persist,
+            intake: { fetchSources: async () => [SOURCES[0]!] },
+            extraction: { extract: async () => [excludedByTitle] },
+            preFilter: () => true,
+            deepScrape: { scrape: async (url): Promise<ScrapedContent> => ({ title: 't', description: SCRAPED_DESCRIPTION, url }) },
+            strategicAnalysis: { analyze: async () => [cleanDeep] },
+            costGate: { digestAlreadyExtracted: async () => false, deepAlreadyDone: () => false },
+            sendAlert: async () => {},
+            loadGuardrails: async () => DEFAULT_GUARDRAILS,
+            loadPreferences: async () => ({ keywords: [], locations: [] }),
+        };
+
+        await runIngestion({}, deps);
+
+        const row = rows.get('gmail://msgA#0');
+        expect(row?.strategicScore).toBe(0);             // the Pass-1 title term still vetoes...
+        expect(row?.strategicCategory).toBe('REJECT');   // ...through enrichment
+        expect(row?.recommendedAction).toBe('SUPPRESS');
+        expect(row?.concerns?.some((c) => c.includes('Gambling'))).toBe(true);
+    });
+});
+
+describe('mergeGuardrailSettings (#5)', () => {
+    it('fills missing lists from defaults on a partial stored object', () => {
+        const merged = mergeGuardrailSettings({ excludedIndustries: ['Crypto'] });
+        expect(merged.excludedIndustries).toEqual(['Crypto']);                       // honoured
+        expect(merged.penaltyKeywords).toEqual(DEFAULT_GUARDRAILS.penaltyKeywords);  // filled
+        expect(merged.tier1Keywords).toEqual(DEFAULT_GUARDRAILS.tier1Keywords);      // filled
+    });
+
+    it('coerces non-array / null / undefined values to defaults so guardrails never crash', () => {
+        const merged = mergeGuardrailSettings({ excludedIndustries: 'oops', penaltyKeywords: null });
+        expect(merged.excludedIndustries).toEqual(DEFAULT_GUARDRAILS.excludedIndustries);
+        expect(merged.penaltyKeywords).toEqual(DEFAULT_GUARDRAILS.penaltyKeywords);
+        expect(mergeGuardrailSettings(undefined)).toEqual(DEFAULT_GUARDRAILS);
+    });
+
+    it('passes a complete stored object through unchanged', () => {
+        const full = { excludedIndustries: ['A'], penaltyKeywords: ['b'], tier1Keywords: ['c'] };
+        expect(mergeGuardrailSettings(full)).toEqual(full);
+    });
+
+    it('drops non-string entries so guardrails never call .toLowerCase() on a number', () => {
+        // mixed list → keep only the strings; a list with NO valid strings is malformed → defaults.
+        const merged = mergeGuardrailSettings({ excludedIndustries: ['Crypto', 123, null], penaltyKeywords: [42] });
+        expect(merged.excludedIndustries).toEqual(['Crypto']);                        // numbers/nulls dropped
+        expect(merged.penaltyKeywords).toEqual(DEFAULT_GUARDRAILS.penaltyKeywords);   // all-invalid → fallback
+    });
+
+    it('honours an intentionally-empty list (no entries) without falling back to defaults', () => {
+        const merged = mergeGuardrailSettings({ excludedIndustries: [] });
+        expect(merged.excludedIndustries).toEqual([]);
+    });
+
+    it('trims and drops blank/whitespace-only entries so a " " never vetoes every row', () => {
+        // mixed valid + blank → keep the trimmed valid one; all-blank → malformed → defaults.
+        const merged = mergeGuardrailSettings({ excludedIndustries: [' Crypto ', '  '], penaltyKeywords: [' '] });
+        expect(merged.excludedIndustries).toEqual(['Crypto']);                        // trimmed, blank dropped
+        expect(merged.penaltyKeywords).toEqual(DEFAULT_GUARDRAILS.penaltyKeywords);   // all-blank → fallback
     });
 });

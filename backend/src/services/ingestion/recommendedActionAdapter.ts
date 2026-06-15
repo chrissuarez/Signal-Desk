@@ -1,24 +1,35 @@
 /**
- * Score → routing-signals adapter (issue #13 commit 4; Strategic Score fed in by #4).
+ * Reconciled-result → routing-signals adapter (issue #13 commit 4; lit up by #5).
  *
- * The (still-degenerate) adapter behind the Recommended Action routing seam: it lifts a
- * single 0–100 score onto the target-shaped `RecommendedActionSignals` with `category:
- * null` and both risks `LOW`. With a null category only the decision module's
- * null-category fallback fires, so live routing stays score-driven.
+ * The adapter behind the Recommended Action routing seam. Through #13/#4 this was a *degenerate*
+ * `scoreToSignals` that hardcoded `category: null` + LOW risks, so only the decision module's
+ * null-category fallback fired and routing was purely score-driven. #5 makes the Strategic
+ * Category trustworthy (Guardrail veto + reconciliation), so routing now feeds the real
+ * reconciled category + risk flags — the dormant category/risk arms in `decideRecommendedAction`
+ * light up with zero change to that pure module (a confirmed RESOURCE_ADMIN_TRAP/REJECT now
+ * SUPPRESSes, an SEO comfort zone STOREs, instead of slipping through the score-only arm).
  *
- * #13 fed this the legacy `fitScore` (the only score that existed then); #4 feeds it the
- * computed Strategic Score, so ALERT/top-of-dashboard ranking follows the Strategic Score
- * — the ADR-0001 ranking authority — not the Fit Score. #7b replaces this adapter with the
- * real category+risk adapter and the dormant category arms light up — zero change to
- * `decideRecommendedAction`.
+ * A null reconciled category (no LLM category, no force-rule) still routes through the
+ * score-driven fallback exactly as before.
  */
 
 import type { RecommendedActionSignals } from '../../engine/recommendedActionRouting.js';
+import type { StrategicCategory, RiskLevel } from '../../engine/strategicVocabulary.js';
 
-/** Lift a single 0–100 score (today the Strategic Score) onto degenerate routing signals. */
-export const scoreToSignals = (score: number): RecommendedActionSignals => ({
-  strategicScore: score,
-  category: null,
-  seoComfortZoneRisk: 'LOW',
-  resourceAdminTrapRisk: 'LOW',
+/**
+ * Lift the reconciled #5 result onto the target-shaped routing signals. The reconciled category
+ * already encodes the risk-forced precedence (trap/SEO HIGH → forced category); the raw risk
+ * flags are passed through too (null → LOW, the routing module's neutral) so the SEO/trap arms
+ * route correctly. A null score (un-scored) routes as 0 — un-scored never alerts.
+ */
+export const reconciledToSignals = (args: {
+  strategicScore: number | null;
+  category: StrategicCategory | null;
+  seoComfortZoneRisk: RiskLevel | null;
+  resourceAdminTrapRisk: RiskLevel | null;
+}): RecommendedActionSignals => ({
+  strategicScore: args.strategicScore ?? 0,
+  category: args.category,
+  seoComfortZoneRisk: args.seoComfortZoneRisk ?? 'LOW',
+  resourceAdminTrapRisk: args.resourceAdminTrapRisk ?? 'LOW',
 });

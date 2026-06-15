@@ -13,6 +13,9 @@ import { legacyScoreReconcile, type ScoreReconcile } from '../engine/scoreReconc
 import { legacyPreFilter, type StrategicPreFilter } from '../engine/strategicPreFilter.js';
 import { decideRecommendedAction } from '../engine/recommendedActionRouting.js';
 import { computeStrategicScore } from '../engine/strategicScoring.js';
+import { applyScoreGuardrails, DEFAULT_GUARDRAILS, type GuardrailSettings } from '../engine/strategicGuardrails.js';
+import { reconcileStrategicCategory } from '../engine/strategicReconcile.js';
+import type { StrategicCategory } from '../engine/strategicVocabulary.js';
 import { sendImmediateAlert } from './notificationService.js';
 import { db } from '../db/index.js';
 import { settings } from '../db/schema.js';
@@ -23,7 +26,7 @@ import { defaultExtraction, type ExtractionAdapter } from './ingestion/extractio
 import { httpDeepScrape, type DeepScrapeAdapter } from './ingestion/deepScrape.js';
 import { aiStrategicAnalysis, type StrategicAnalysisAdapter } from './ingestion/strategicAnalysis.js';
 import { dbCostGate, type CostGate } from './ingestion/costGate.js';
-import { scoreToSignals } from './ingestion/recommendedActionAdapter.js';
+import { reconciledToSignals } from './ingestion/recommendedActionAdapter.js';
 import type {
     IngestionError,
     IngestionPreferences,
@@ -48,6 +51,8 @@ export interface IngestionDeps {
     sendAlert: (row: OpportunityRow) => Promise<void>;
     /** Load the user's scoring preferences (once per run, reused across digests). */
     loadPreferences: () => Promise<IngestionPreferences>;
+    /** Load the configurable Guardrail inputs (once per run, reused across digests). */
+    loadGuardrails: () => Promise<GuardrailSettings>;
 }
 
 const DEFAULT_PREFERENCES: IngestionPreferences = {
@@ -63,6 +68,49 @@ const dbLoadPreferences = async (): Promise<IngestionPreferences> => {
     return (prefsRecord?.value as IngestionPreferences) || DEFAULT_PREFERENCES;
 };
 
+/**
+ * Merge a (possibly partial) stored guardrails object with `DEFAULT_GUARDRAILS`. Pure. Each
+ * list is filled independently — a partial update through the generic settings API (a row that
+ * omits one of the three arrays, or stores a non-array) must not leave a list `undefined`, or
+ * `applyScoreGuardrails` would later call `.find`/`includesAny` on it and the whole opportunity
+ * would throw. Validating per-list (not truthy-casting the whole object) is what keeps the
+ * veto/cap/floor live under partial settings.
+ */
+export const mergeGuardrailSettings = (stored: unknown): GuardrailSettings => {
+    const s = (stored ?? {}) as Partial<GuardrailSettings>;
+    return {
+        excludedIndustries: toStringList(s.excludedIndustries, DEFAULT_GUARDRAILS.excludedIndustries),
+        penaltyKeywords: toStringList(s.penaltyKeywords, DEFAULT_GUARDRAILS.penaltyKeywords),
+        tier1Keywords: toStringList(s.tier1Keywords, DEFAULT_GUARDRAILS.tier1Keywords),
+    };
+};
+
+/**
+ * Coerce a stored guardrail list to `string[]`. The generic settings endpoint stores arbitrary
+ * JSON, so a row like `{ penaltyKeywords: [123] }` would pass `Array.isArray` yet later blow up
+ * when `includesAny`/the industry check call `.toLowerCase()` on a number. Non-array → fallback;
+ * otherwise keep only non-blank strings, trimmed — a whitespace-only entry like `" "` is a
+ * substring of every `title + ' ' + description`, so it would veto/cap *every* row if accepted.
+ * A non-empty array with *no* valid entries is malformed → fall back to defaults, while an
+ * intentionally-empty list (`[]` = "no entries") is honoured.
+ */
+const toStringList = (value: unknown, fallback: string[]): string[] => {
+    if (!Array.isArray(value)) return fallback;
+    const strings = value
+        .filter((v): v is string => typeof v === 'string')
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0);
+    return strings.length === 0 && value.length > 0 ? fallback : strings;
+};
+
+/** Production Guardrail-inputs loader: the `strategic_guardrails` settings row, merged with defaults. */
+const dbLoadGuardrails = async (): Promise<GuardrailSettings> => {
+    const record = await db.query.settings.findFirst({
+        where: eq(settings.key, 'strategic_guardrails'),
+    });
+    return mergeGuardrailSettings(record?.value);
+};
+
 /** The production wiring: real adapters behind every seam. */
 export const defaultDeps: IngestionDeps = {
     intake: gmailIntake,
@@ -75,6 +123,7 @@ export const defaultDeps: IngestionDeps = {
     costGate: dbCostGate,
     sendAlert: sendImmediateAlert,
     loadPreferences: dbLoadPreferences,
+    loadGuardrails: dbLoadGuardrails,
 };
 
 const emptySummary = (): IngestionRunSummary => ({
@@ -115,6 +164,46 @@ const reportSummary = (summary: IngestionRunSummary): void => {
     );
 };
 
+/**
+ * Apply the deterministic Guardrails + Category reconciliation (#5, ADR-0002) to a computed
+ * Strategic Score. Guardrails run first (they can cap the score or force REJECT on an excluded
+ * industry); the LLM category is then reconciled against the *capped* score + risk flags. A
+ * Guardrail-forced category wins outright. Returns the final score/category + any Guardrail
+ * concerns to merge into the row. Shared by Pass 1 and the Pass-2 re-score so they stay in step.
+ */
+const reconcileScoreAndCategory = (args: {
+    strategicScore: number | null;
+    llmCategory: StrategicCategory | null;
+    strategicFields: {
+        deliveryVisibility: number | null;
+        commercialProximity: number | null;
+        resourceAdminTrapRisk: import('../engine/strategicVocabulary.js').RiskLevel | null;
+        seoComfortZoneRisk: import('../engine/strategicVocabulary.js').RiskLevel | null;
+    };
+    industry: string | undefined;
+    title: string;
+    description: string;
+    guardrails: GuardrailSettings;
+}): { strategicScore: number | null; strategicCategory: StrategicCategory | null; guardrailConcerns: string[] } => {
+    const guard = applyScoreGuardrails(
+        // `?? ''` so an absent industry isn't passed as an explicit `undefined` (rejected under
+        // exactOptionalPropertyTypes); the Guardrail treats '' as "no industry" (no veto) anyway.
+        { score: args.strategicScore, industry: args.industry ?? '', title: args.title, description: args.description },
+        args.guardrails,
+    );
+    const strategicCategory =
+        guard.forcedCategory ??
+        reconcileStrategicCategory({
+            llmCategory: args.llmCategory,
+            strategicScore: guard.score,
+            resourceAdminTrapRisk: args.strategicFields.resourceAdminTrapRisk,
+            seoComfortZoneRisk: args.strategicFields.seoComfortZoneRisk,
+            deliveryVisibility: args.strategicFields.deliveryVisibility,
+            commercialProximity: args.strategicFields.commercialProximity,
+        });
+    return { strategicScore: guard.score, strategicCategory, guardrailConcerns: guard.concerns };
+};
+
 /** Run the per-opportunity pipeline for one extracted opportunity, mutating `summary`. */
 const processOpportunity = async (
     deps: IngestionDeps,
@@ -123,6 +212,7 @@ const processOpportunity = async (
     analysis: Awaited<ReturnType<ExtractionAdapter['extract']>>[number],
     index: number,
     preferences: IngestionPreferences,
+    guardrails: GuardrailSettings,
     force: boolean,
 ): Promise<void> => {
     const { messageId, from, body, internalDate } = source;
@@ -150,14 +240,36 @@ const processOpportunity = async (
         ...analysis.strategicAnalysis,
         practicalFit: scored.fitScore,
     };
-    const strategicScore = computeStrategicScore(strategicFields);
+    const computedScore = computeStrategicScore(strategicFields);
+
+    // #5 (ADR-0002): deterministic Guardrails (excluded-industry veto, penalty cap, tier-1
+    // floor) bound the computed score, then the LLM-proposed category is reconciled against
+    // the *capped* score + risk flags by fixed precedence. The reconciled category + capped
+    // score are what we persist and route on.
+    const reconciled = reconcileScoreAndCategory({
+        strategicScore: computedScore,
+        llmCategory: analysis.strategicCategory,
+        strategicFields,
+        industry: analysis.industry,
+        title: analysis.title,
+        description: analysis.description,
+        guardrails,
+    });
+    const strategicScore = reconciled.strategicScore;
+    const strategicCategory = reconciled.strategicCategory;
 
     // ADR-0005 (#13): ingestion writes the system's `recommendedAction` and no longer
     // writes `status` — `status` is now purely the user's lifecycle field. ADR-0001 (#4):
-    // routing follows the Strategic Score (null → 0, i.e. un-scored never alerts), so
-    // ALERT/top-of-dashboard is Strategic-driven, not Fit-driven. The degenerate adapter
-    // still nulls the category, so only the null-category fallback fires until #7b.
-    let recommendedAction = decideRecommendedAction(scoreToSignals(strategicScore ?? 0));
+    // routing follows the (Guardrail-capped) Strategic Score (null → 0, i.e. un-scored never
+    // alerts). #5: it also follows the *reconciled* category + risk flags — a confirmed
+    // RESOURCE_ADMIN_TRAP/REJECT SUPPRESSes and an SEO comfort zone STOREs, rather than
+    // slipping through the score-only arm, so a bad row can never ALERT on a high raw score.
+    let recommendedAction = decideRecommendedAction(reconciledToSignals({
+        strategicScore,
+        category: strategicCategory,
+        seoComfortZoneRisk: strategicFields.seoComfortZoneRisk,
+        resourceAdminTrapRisk: strategicFields.resourceAdminTrapRisk,
+    }));
 
     const insertedRow = await deps.persist.upsertByCanonicalUrl({
         type: analysis.type,
@@ -174,8 +286,8 @@ const processOpportunity = async (
         sourceUrl: analysis.sourceUrl || null,
         fitScore: scored.fitScore,
         reasons: [...analysis.reasons, ...scored.reasons],
-        concerns: [...analysis.concerns, ...scored.concerns],
-        strategicCategory: analysis.strategicCategory,
+        concerns: [...analysis.concerns, ...scored.concerns, ...reconciled.guardrailConcerns],
+        strategicCategory,
         ...strategicFields,
         strategicScore,
         recommendedAction,
@@ -189,8 +301,8 @@ const processOpportunity = async (
         sourceUrl: analysis.sourceUrl || null,
         fitScore: scored.fitScore,
         reasons: [...analysis.reasons, ...scored.reasons],
-        concerns: [...analysis.concerns, ...scored.concerns],
-        strategicCategory: analysis.strategicCategory,
+        concerns: [...analysis.concerns, ...scored.concerns, ...reconciled.guardrailConcerns],
+        strategicCategory,
         ...strategicFields,
         strategicScore,
         recommendedAction,
@@ -233,16 +345,38 @@ const processOpportunity = async (
                             ...finalAnalysis.strategicAnalysis,
                             practicalFit: finalScored.fitScore,
                         };
-                        const finalStrategicScore = computeStrategicScore(finalStrategicFields);
-                        recommendedAction = decideRecommendedAction(scoreToSignals(finalStrategicScore ?? 0));
+                        const finalComputedScore = computeStrategicScore(finalStrategicFields);
+                        // #5: re-run Guardrails + reconciliation on the deeper analysis. Veto on
+                        // BOTH the deep AND the Pass-1 text/industry, not deep-or-Pass-1 — a deep
+                        // broad label ("Other") or a re-written generic title/description must not
+                        // shadow a Pass-1 veto term. The deep update never overwrites the persisted
+                        // industry/title (they stay the Pass-1 values), so a hard veto (whether the
+                        // term was in the industry, title, or description) must not disappear here.
+                        const finalReconciled = reconcileScoreAndCategory({
+                            strategicScore: finalComputedScore,
+                            llmCategory: finalAnalysis.strategicCategory,
+                            strategicFields: finalStrategicFields,
+                            industry: [finalAnalysis.industry, analysis.industry].filter(Boolean).join(' '),
+                            title: [finalAnalysis.title, analysis.title].filter(Boolean).join(' '),
+                            description: [scraped.description, analysis.description].filter(Boolean).join(' '),
+                            guardrails,
+                        });
+                        const finalStrategicScore = finalReconciled.strategicScore;
+                        // Same #5 reconciled-signal routing on the deeper analysis (see Pass 1 above).
+                        recommendedAction = decideRecommendedAction(reconciledToSignals({
+                            strategicScore: finalStrategicScore,
+                            category: finalReconciled.strategicCategory,
+                            seoComfortZoneRisk: finalStrategicFields.seoComfortZoneRisk,
+                            resourceAdminTrapRisk: finalStrategicFields.resourceAdminTrapRisk,
+                        }));
 
                         const deepUpdate = {
                             description: scraped.description,
                             requirements: finalAnalysis.reasons.join(', '), // Using reasons as a proxy for raw requirements extract
                             fitScore: finalScored.fitScore,
                             reasons: [...finalAnalysis.reasons, ...finalScored.reasons],
-                            concerns: [...finalAnalysis.concerns, ...finalScored.concerns],
-                            strategicCategory: finalAnalysis.strategicCategory,
+                            concerns: [...finalAnalysis.concerns, ...finalScored.concerns, ...finalReconciled.guardrailConcerns],
+                            strategicCategory: finalReconciled.strategicCategory,
                             ...finalStrategicFields,
                             strategicScore: finalStrategicScore,
                             recommendedAction,
@@ -285,10 +419,12 @@ export const runIngestion = async (
     // so it is recorded as a run-level error and the (empty) summary is returned.
     let sources: Awaited<ReturnType<IntakeAdapter['fetchSources']>>;
     let preferences: IngestionPreferences;
+    let guardrails: GuardrailSettings;
     try {
         sources = await deps.intake.fetchSources('Job Alerts', limit);
         summary.sourcesSeen = sources.length;
         preferences = await deps.loadPreferences();
+        guardrails = await deps.loadGuardrails();
     } catch (error) {
         recordError(summary, { stage: 'intake' }, error);
         reportSummary(summary);
@@ -313,7 +449,7 @@ export const runIngestion = async (
             for (const [i, analysis] of analysisResults.entries()) {
                 if (analysis.type === 'NOISE') continue;
                 try {
-                    await processOpportunity(deps, summary, source, analysis, i, preferences, force);
+                    await processOpportunity(deps, summary, source, analysis, i, preferences, guardrails, force);
                 } catch (error) {
                     recordError(summary, {
                         stage: 'opportunity',

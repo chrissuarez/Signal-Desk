@@ -46,9 +46,13 @@ const LOW_SCORE = 40;
 export const decideRecommendedAction = (signals: RecommendedActionSignals): RecommendedAction => {
   const { strategicScore, category, seoComfortZoneRisk, resourceAdminTrapRisk } = signals;
 
-  // 1. Null-category fallback — the only arm that fires live in #13.
+  // 1. Null-category fallback (score-driven) — but a HIGH risk flag still blocks an alert. Now
+  //    that real risk flags flow (#5), an un-categorised role with a HIGH SEO/trap risk must not
+  //    ALERT on score alone the way it would have under the old LOW-risk-only adapter; it STOREs,
+  //    matching how the category arms (3/5) treat the same HIGH flags.
   if (category === null) {
-    return strategicScore >= ALERT_SCORE ? 'ALERT' : 'STORE';
+    const highRisk = resourceAdminTrapRisk === 'HIGH' || seoComfortZoneRisk === 'HIGH';
+    return strategicScore >= ALERT_SCORE && !highRisk ? 'ALERT' : 'STORE';
   }
 
   // 2. Confirmed-bad categories are hidden (SUPPRESS persists but excludes from default views).
