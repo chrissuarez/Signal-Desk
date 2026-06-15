@@ -513,6 +513,58 @@ describe('runIngestion (fake-backed pipeline)', () => {
         expect(row?.recommendedAction).toBe('SUPPRESS'); // #5: a REJECT is hidden through Pass 2 too
         expect(row?.concerns?.some((c) => c.includes('Gambling'))).toBe(true);
     });
+
+    it('keeps the Pass-1 veto when the deep analysis returns a non-empty broad label (#5)', async () => {
+        // The trap-case of the test above: the deep analyzer returns a *non-empty* broad label
+        // ("Other"), not ''. A `deep || pass1` industry would let "Other" shadow the Pass-1
+        // "Online Gambling" and un-veto the row — but the persisted industry is never replaced,
+        // so the veto must still fire on the Pass-1 value: score 0, REJECT, SUPPRESS.
+        const excludedExtracted: ExtractedOpportunity = {
+            type: 'JOB', title: 'Engineer', company: 'BetCo', industry: 'Online Gambling',
+            description: 'A role', sourceUrl: 'https://example.com/x', reasons: [], concerns: [], strategicCategory: 'STRATEGIC_FIT',
+            strategicAnalysis: {
+                consultancyAlignment: 80, deliveryVisibility: 80, commercialProximity: 80,
+                buyerEnvironmentFit: 80, seniorityScope: 80,
+                resourceAdminTrapRisk: 'LOW', seoComfortZoneRisk: 'LOW',
+                realRoleInterpretation: 'Strong on paper.', consultancyRelevance: 'But excluded industry.',
+                strategicReasons: [], strategicConcerns: [], recommendedScreeningQuestions: [],
+            },
+        };
+        const strongDeepBroadLabel: AIAnalysisResult = {
+            type: 'JOB', title: 'Engineer', company: 'BetCo',
+            industry: 'Other', location: 'Remote', remoteStatus: 'REMOTE', description: SCRAPED_DESCRIPTION,
+            reasons: ['deep'], concerns: [], strategicCategory: 'STRATEGIC_FIT',
+            strategicAnalysis: {
+                consultancyAlignment: 95, deliveryVisibility: 95, commercialProximity: 95,
+                buyerEnvironmentFit: 95, seniorityScope: 95,
+                resourceAdminTrapRisk: 'LOW', seoComfortZoneRisk: 'LOW',
+                realRoleInterpretation: 'deep', consultancyRelevance: 'strong',
+                strategicReasons: [], strategicConcerns: [], recommendedScreeningQuestions: [],
+            },
+        };
+        const { adapter: persist, rows } = makePersistDouble();
+        const deps: IngestionDeps = {
+            ...defaultDeps, persist,
+            intake: { fetchSources: async () => [SOURCES[0]!] },
+            extraction: { extract: async () => [excludedExtracted] },
+            preFilter: () => true, // force Pass 2 regardless of Fit Score
+            deepScrape: { scrape: async (url): Promise<ScrapedContent> => ({ title: 't', description: SCRAPED_DESCRIPTION, url }) },
+            strategicAnalysis: { analyze: async () => [strongDeepBroadLabel] },
+            costGate: { digestAlreadyExtracted: async () => false, deepAlreadyDone: () => false },
+            sendAlert: async () => {},
+            loadGuardrails: async () => DEFAULT_GUARDRAILS,
+            loadPreferences: async () => ({ keywords: [], locations: [] }),
+        };
+
+        const summary = await runIngestion({}, deps);
+
+        const row = rows.get('gmail://msgA#0');
+        expect(summary.deepAnalyzed).toBe(1);            // Pass 2 ran with the broad-label deep result...
+        expect(row?.strategicScore).toBe(0);             // ...but "Other" did not shadow the veto
+        expect(row?.strategicCategory).toBe('REJECT');
+        expect(row?.recommendedAction).toBe('SUPPRESS');
+        expect(row?.concerns?.some((c) => c.includes('Gambling'))).toBe(true);
+    });
 });
 
 describe('mergeGuardrailSettings (#5)', () => {

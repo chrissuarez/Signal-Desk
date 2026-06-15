@@ -341,15 +341,16 @@ const processOpportunity = async (
                             practicalFit: finalScored.fitScore,
                         };
                         const finalComputedScore = computeStrategicScore(finalStrategicFields);
-                        // #5: re-run Guardrails + reconciliation on the deeper analysis. Fall back
-                        // to the Pass-1 industry when the deep analyzer omits/normalizes it away —
-                        // the persisted row still carries that industry, so a hard excluded-industry
-                        // veto must not silently disappear during enrichment.
+                        // #5: re-run Guardrails + reconciliation on the deeper analysis. Veto on
+                        // BOTH the deep AND the Pass-1 industry, not deep-or-Pass-1 — a deep broad
+                        // label (e.g. "Other") must not shadow a Pass-1 excluded industry. The deep
+                        // update never overwrites the persisted `industry` (it stays the Pass-1
+                        // value), so a hard excluded-industry veto must not disappear in enrichment.
                         const finalReconciled = reconcileScoreAndCategory({
                             strategicScore: finalComputedScore,
                             llmCategory: finalAnalysis.strategicCategory,
                             strategicFields: finalStrategicFields,
-                            industry: finalAnalysis.industry || analysis.industry,
+                            industry: [finalAnalysis.industry, analysis.industry].filter(Boolean).join(' '),
                             title: finalAnalysis.title,
                             description: scraped.description,
                             guardrails,
