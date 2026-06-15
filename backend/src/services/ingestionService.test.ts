@@ -154,9 +154,10 @@ describe('runIngestion (fake-backed pipeline)', () => {
         expect(summary.deepAnalyzed).toBe(1);       // and it has a sourceUrl, so Pass 2 runs
         expect(summary.created).toBe(3);            // high + mid + low; NOISE is not persisted
         expect(summary.updated).toBe(0);
-        // Routing now follows the Strategic Score (#4): all three rows score < 80
-        // strategically, so all STORE — even the 85-Fit row. No DIGEST/SUPPRESS until #7b.
-        expect(summary.byRecommendedAction).toEqual({ ALERT: 0, DIGEST: 0, STORE: 3, SUPPRESS: 0 });
+        // Routing follows the Strategic Score (#4) AND the reconciled category (#5): no row
+        // clears the 80 alert threshold, but the high row is a mid-scoring USEFUL_BRIDGE (66)
+        // so its category arm routes it to DIGEST; mid (33 < 40) and low (null category) STORE.
+        expect(summary.byRecommendedAction).toEqual({ ALERT: 0, DIGEST: 1, STORE: 2, SUPPRESS: 0 });
         expect(summary.errors).toEqual([]);
 
         // Persisted rows: NOISE never lands; the three jobs do, at their routed action.
@@ -165,9 +166,10 @@ describe('runIngestion (fake-backed pipeline)', () => {
         const mid = rows.get('gmail://msgA#2');
         const low = rows.get('gmail://msgA#3');
 
-        // High Fit (85) but sub-threshold Strategic (66) → STORE, NOT ALERT: the #4 fix
-        // means the Fit Score no longer floats a role to the top of the dashboard.
-        expect(high?.recommendedAction).toBe('STORE');
+        // High Fit (85) but sub-threshold Strategic (66) → never ALERT: the #4 fix means the
+        // Fit Score no longer floats a role to the top of the dashboard. As a mid-scoring
+        // USEFUL_BRIDGE it routes to DIGEST (#5 category arm), not STORE.
+        expect(high?.recommendedAction).toBe('DIGEST');
         expect(high?.fitScore).toBe(85);
         expect(high?.description).toBe(SCRAPED_DESCRIPTION); // Pass 2 replaced the body
         // The LLM labelled it STRATEGIC_FIT, but reconciliation (#5) demotes it: the deep
@@ -379,7 +381,11 @@ describe('runIngestion (fake-backed pipeline)', () => {
 
         await runIngestion({}, deps);
 
-        expect(rows.get('gmail://msgA#0')?.strategicCategory).toBe('RESOURCE_ADMIN_TRAP');
+        const trapResult = rows.get('gmail://msgA#0');
+        expect(trapResult?.strategicCategory).toBe('RESOURCE_ADMIN_TRAP');
+        // #5 routing: a confirmed trap SUPPRESSes even on a high raw score — it must not ALERT
+        // through the score-only arm just because the LLM proposed STRATEGIC_FIT.
+        expect(trapResult?.recommendedAction).toBe('SUPPRESS');
     });
 
     it('vetoes an excluded industry: caps the Strategic Score to 0 and forces REJECT (#5)', async () => {
@@ -410,9 +416,9 @@ describe('runIngestion (fake-backed pipeline)', () => {
         await runIngestion({}, deps);
 
         const row = rows.get('gmail://msgA#0');
-        expect(row?.strategicScore).toBe(0);            // industry veto caps the score
-        expect(row?.strategicCategory).toBe('REJECT');  // …and forces REJECT
-        expect(row?.recommendedAction).toBe('STORE');   // score 0 → not an alert
+        expect(row?.strategicScore).toBe(0);             // industry veto caps the score
+        expect(row?.strategicCategory).toBe('REJECT');   // …and forces REJECT
+        expect(row?.recommendedAction).toBe('SUPPRESS'); // #5: a REJECT is hidden, not just stored
         expect(row?.concerns?.some((c) => c.includes('Gambling'))).toBe(true);
     });
 
@@ -460,7 +466,7 @@ describe('runIngestion (fake-backed pipeline)', () => {
         // Pass 1 vetoes on the excluded industry, but the Fit Score clears the pre-filter so
         // Pass 2 runs. The deep analyzer drops the industry (''), so without the Pass-1 fallback
         // the deep re-score would un-veto the row and persist/route a high score for an excluded
-        // industry. The veto must survive enrichment: score 0, REJECT, STORE.
+        // industry. The veto must survive enrichment: score 0, REJECT, SUPPRESS.
         const excludedExtracted: ExtractedOpportunity = {
             type: 'JOB', title: 'Engineer', company: 'BetCo', industry: 'Online Gambling',
             description: 'A role', sourceUrl: 'https://example.com/x', reasons: [], concerns: [], strategicCategory: 'STRATEGIC_FIT',
@@ -502,9 +508,9 @@ describe('runIngestion (fake-backed pipeline)', () => {
 
         const row = rows.get('gmail://msgA#0');
         expect(summary.deepAnalyzed).toBe(1);           // Pass 2 actually ran...
-        expect(row?.strategicScore).toBe(0);            // ...but the veto held: score still 0
-        expect(row?.strategicCategory).toBe('REJECT');  // ...and the category stays REJECT
-        expect(row?.recommendedAction).toBe('STORE');   // score 0 → never an alert
+        expect(row?.strategicScore).toBe(0);             // ...but the veto held: score still 0
+        expect(row?.strategicCategory).toBe('REJECT');   // ...and the category stays REJECT
+        expect(row?.recommendedAction).toBe('SUPPRESS'); // #5: a REJECT is hidden through Pass 2 too
         expect(row?.concerns?.some((c) => c.includes('Gambling'))).toBe(true);
     });
 });

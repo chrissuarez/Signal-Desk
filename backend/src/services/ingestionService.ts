@@ -26,7 +26,7 @@ import { defaultExtraction, type ExtractionAdapter } from './ingestion/extractio
 import { httpDeepScrape, type DeepScrapeAdapter } from './ingestion/deepScrape.js';
 import { aiStrategicAnalysis, type StrategicAnalysisAdapter } from './ingestion/strategicAnalysis.js';
 import { dbCostGate, type CostGate } from './ingestion/costGate.js';
-import { scoreToSignals } from './ingestion/recommendedActionAdapter.js';
+import { reconciledToSignals } from './ingestion/recommendedActionAdapter.js';
 import type {
     IngestionError,
     IngestionPreferences,
@@ -256,8 +256,15 @@ const processOpportunity = async (
     // ADR-0005 (#13): ingestion writes the system's `recommendedAction` and no longer
     // writes `status` — `status` is now purely the user's lifecycle field. ADR-0001 (#4):
     // routing follows the (Guardrail-capped) Strategic Score (null → 0, i.e. un-scored never
-    // alerts), so ALERT/top-of-dashboard is Strategic-driven, not Fit-driven.
-    let recommendedAction = decideRecommendedAction(scoreToSignals(strategicScore ?? 0));
+    // alerts). #5: it also follows the *reconciled* category + risk flags — a confirmed
+    // RESOURCE_ADMIN_TRAP/REJECT SUPPRESSes and an SEO comfort zone STOREs, rather than
+    // slipping through the score-only arm, so a bad row can never ALERT on a high raw score.
+    let recommendedAction = decideRecommendedAction(reconciledToSignals({
+        strategicScore,
+        category: strategicCategory,
+        seoComfortZoneRisk: strategicFields.seoComfortZoneRisk,
+        resourceAdminTrapRisk: strategicFields.resourceAdminTrapRisk,
+    }));
 
     const insertedRow = await deps.persist.upsertByCanonicalUrl({
         type: analysis.type,
@@ -348,7 +355,13 @@ const processOpportunity = async (
                             guardrails,
                         });
                         const finalStrategicScore = finalReconciled.strategicScore;
-                        recommendedAction = decideRecommendedAction(scoreToSignals(finalStrategicScore ?? 0));
+                        // Same #5 reconciled-signal routing on the deeper analysis (see Pass 1 above).
+                        recommendedAction = decideRecommendedAction(reconciledToSignals({
+                            strategicScore: finalStrategicScore,
+                            category: finalReconciled.strategicCategory,
+                            seoComfortZoneRisk: finalStrategicFields.seoComfortZoneRisk,
+                            resourceAdminTrapRisk: finalStrategicFields.resourceAdminTrapRisk,
+                        }));
 
                         const deepUpdate = {
                             description: scraped.description,
