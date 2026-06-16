@@ -426,18 +426,21 @@ const processOpportunity = async (
                     console.log(`Pass 2: Re-analyzing with full description (Length: ${scraped.description.length})...`);
                     const deepAnalysis = await deps.strategicAnalysis.analyze(scraped.description);
                     const finalAnalysis = deepAnalysis?.[0];
-                    // The production analyzer SWALLOWS Gemini/parse failures and returns a truthy
-                    // NOISE row with an EMPTY strategic block (aiService) — it does not throw. Marking
-                    // that as DEEP would persist empty strategic fields AND flip the cost gate to
-                    // "deep-done", so the pre-Pass-1 guard would block every future retry, stranding
-                    // the row forever. Only a genuine (non-NOISE) deep result upgrades to DEEP; a
-                    // NOISE result leaves the row at its Pass-1 SHALLOW state so a reprocess can retry.
+                    // A Gemini/parse failure now THROWS ExtractionError (#14), caught by the
+                    // surrounding try/catch (stage 'deepScrape') which leaves the row SHALLOW. A
+                    // *genuine* NOISE result (the scraped page wasn't a real posting) still returns a
+                    // NOISE row: marking that as DEEP would persist an empty strategic block AND flip
+                    // the cost gate to "deep-done", so the pre-Pass-1 guard would block every future
+                    // retry, stranding the row forever. Only a genuine (non-NOISE) deep result upgrades
+                    // to DEEP; a NOISE result leaves the row at its Pass-1 SHALLOW state for a reprocess.
                     if (finalAnalysis && finalAnalysis.type !== 'NOISE' && insertedRow?.id) {
                         const finalScored = deps.scoreReconcile({
                             title: finalAnalysis.title,
                             description: scraped.description,
-                            industry: finalAnalysis.industry,
-                            location: finalAnalysis.location,
+                            // Omit when absent (exactOptionalPropertyTypes): the extraction DTO now
+                            // types industry/location as optional, so an explicit undefined is rejected.
+                            ...(finalAnalysis.industry !== undefined ? { industry: finalAnalysis.industry } : {}),
+                            ...(finalAnalysis.location !== undefined ? { location: finalAnalysis.location } : {}),
                             preferences,
                         });
                         const finalStrategicFields = {
@@ -489,8 +492,8 @@ const processOpportunity = async (
                         summary.deepAnalyzed++;
                         console.log(`Pass 2 Complete: ${finalAnalysis.title} re-scored to ${finalScored.fitScore}`);
                     } else if (finalAnalysis && finalAnalysis.type === 'NOISE' && insertedRow?.id) {
-                        // Deep analysis came back NOISE — i.e. the analyzer swallowed a failure (or the
-                        // scraped page wasn't a real posting). Don't persist the empty block or mark DEEP;
+                        // Deep analysis came back NOISE — the scraped page wasn't a real posting (a true
+                        // failure would have thrown, #14). Don't persist the empty block or mark DEEP;
                         // record it so it's visible and leave the row SHALLOW for a later retry.
                         recordError(
                             summary,

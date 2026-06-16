@@ -1,15 +1,16 @@
 /**
- * Extraction seam — Pass 1 (issue #11, plan commit 5).
+ * Extraction seam — Pass 1 (issue #11, plan commit 5; honest internals from #14).
  *
- * Unifies the two ways runIngestion turns a RawSource body into opportunities today:
- * the Gemini-backed AI branch (when GEMINI_API_KEY is set) and the local
- * parser/classifier fallback. Returns pipeline ExtractedOpportunity DTOs. Behaviour
- * identical. The honest/validated AI adapter internals are out of scope here
- * (architecture candidate #3) — this commit only relocates the existing branch.
+ * One injected `ExtractionAdapter` turns a RawSource digest into validated
+ * `ExtractedOpportunity` DTOs. The key-vs-no-key choice is no longer an `if`/`else` inside
+ * a single adapter: {@link createExtractor} reads `GEMINI_API_KEY` once and returns the real
+ * {@link geminiExtractor} (validated Gemini, throws ExtractionError on failure — see
+ * geminiExtractor.ts) or the {@link deterministicExtractor} no-key fallback. Tests inject a
+ * fake adapter directly. Behaviour at the orchestrator boundary is unchanged.
  */
 
 import { parseEmailBody, classifyOpportunity } from '../../engine/parser.js';
-import { analyzeOpportunityWithAI, isAiAnalysisFailure } from '../aiService.js';
+import { extractWithGemini } from './geminiExtractor.js';
 import { EMPTY_STRATEGIC_ANALYSIS } from '../../engine/strategicAnalysis.js';
 import type { ExtractedOpportunity, RawSource } from './types.js';
 
@@ -35,25 +36,23 @@ export const NO_API_KEY_CONCERN = 'AI analysis skipped (no API key)';
 export const isHeuristicFallback = (results: ExtractedOpportunity[]): boolean =>
   results.length === 1 && (results[0]?.concerns?.includes(NO_API_KEY_CONCERN) ?? false);
 
-/** Default Extraction adapter: AI when keyed, local parser fallback otherwise. */
-export const defaultExtraction: ExtractionAdapter = {
+/** The real adapter: validated Gemini extraction (#14). Throws ExtractionError on failure. */
+export const geminiExtractor: ExtractionAdapter = {
+  extract(source) {
+    console.log(`Analyzing message ${source.messageId} with AI (Length: ${source.body.length})...`);
+    return extractWithGemini(source.body);
+  },
+};
+
+/**
+ * The honest no-key fallback: classify + parse the digest locally, with no LLM. Returns a
+ * single heuristic row carrying {@link NO_API_KEY_CONCERN} (the orchestrator skips it when it
+ * classifies as NOISE and never finalizes the digest, so a later keyed run extracts it
+ * properly — see #12). This is a production degraded-mode adapter, not test scaffolding.
+ */
+export const deterministicExtractor: ExtractionAdapter = {
   async extract(source) {
-    const { messageId, subject, body } = source;
-
-    if (process.env.GEMINI_API_KEY) {
-      console.log(`Analyzing message ${messageId} with AI (Length: ${body.length})...`);
-      const results = await analyzeOpportunityWithAI(body);
-      // analyzeOpportunityWithAI swallows a Gemini/parse failure into a sentinel NOISE row
-      // rather than throwing. Surface it as a real extraction error here so the orchestrator
-      // records it and leaves the digest UNMARKED (#12) — otherwise a swallowed failure would
-      // look like a clean all-NOISE digest, get marked complete, and skip the digest forever,
-      // losing every real opportunity in it. Throwing lets the next run re-extract and recover.
-      if (isAiAnalysisFailure(results)) {
-        throw new Error(`AI extraction failed for message ${messageId}`);
-      }
-      return results;
-    }
-
+    const { subject, body } = source;
     const type = classifyOpportunity(body);
     const parsed = parseEmailBody(body);
     return [
@@ -68,5 +67,22 @@ export const defaultExtraction: ExtractionAdapter = {
         strategicAnalysis: EMPTY_STRATEGIC_ANALYSIS,
       },
     ];
+  },
+};
+
+/** Pick the extraction adapter for the current environment: keyed → Gemini, else deterministic. */
+export const createExtractor = (): ExtractionAdapter =>
+  process.env.GEMINI_API_KEY ? geminiExtractor : deterministicExtractor;
+
+/**
+ * Default Extraction adapter. Picks the concrete extractor once on first use (after dotenv has
+ * loaded) and memoizes it, so `GEMINI_API_KEY` is read once rather than per extract — while
+ * staying a stable value for `defaultDeps`.
+ */
+let cached: ExtractionAdapter | undefined;
+export const defaultExtraction: ExtractionAdapter = {
+  extract(source) {
+    cached ??= createExtractor();
+    return cached.extract(source);
   },
 };

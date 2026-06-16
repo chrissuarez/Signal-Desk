@@ -17,7 +17,6 @@ import type { PersistAdapter, OpportunityRow, OpportunityInsert } from './ingest
 import type { ExtractedOpportunity, RawSource } from './ingestion/types.js';
 import { NO_API_KEY_CONCERN } from './ingestion/extraction.js';
 import type { ScrapedContent } from './scraperService.js';
-import type { AIAnalysisResult } from './aiService.js';
 import { EMPTY_STRATEGIC_ANALYSIS } from '../engine/strategicAnalysis.js';
 import { DEFAULT_GUARDRAILS } from '../engine/strategicGuardrails.js';
 
@@ -103,7 +102,7 @@ const EXTRACTED: ExtractedOpportunity[] = [
     },
 ];
 
-const FINAL_ANALYSIS: AIAnalysisResult = {
+const FINAL_ANALYSIS: ExtractedOpportunity = {
     type: 'JOB', title: 'Senior Engineer TypeScript AI', company: 'Acme',
     industry: '', location: 'Remote', remoteStatus: 'REMOTE', description: SCRAPED_DESCRIPTION,
     reasons: ['deep reason'], concerns: [], strategicCategory: 'STRATEGIC_FIT',
@@ -281,7 +280,7 @@ describe('runIngestion (fake-backed pipeline)', () => {
                 strategicReasons: [], strategicConcerns: [], recommendedScreeningQuestions: [],
             },
         };
-        const promoteFinal: AIAnalysisResult = {
+        const promoteFinal: ExtractedOpportunity = {
             type: 'JOB', title: 'Engineer', company: 'Promo',
             industry: '', location: 'Remote', remoteStatus: 'REMOTE', description: SCRAPED_DESCRIPTION,
             reasons: ['deep'], concerns: [], strategicCategory: null,
@@ -497,7 +496,7 @@ describe('runIngestion (fake-backed pipeline)', () => {
                 strategicReasons: [], strategicConcerns: [], recommendedScreeningQuestions: [],
             },
         };
-        const strongDeepNoIndustry: AIAnalysisResult = {
+        const strongDeepNoIndustry: ExtractedOpportunity = {
             type: 'JOB', title: 'Engineer', company: 'BetCo',
             industry: '', location: 'Remote', remoteStatus: 'REMOTE', description: SCRAPED_DESCRIPTION,
             reasons: ['deep'], concerns: [], strategicCategory: 'STRATEGIC_FIT',
@@ -549,7 +548,7 @@ describe('runIngestion (fake-backed pipeline)', () => {
                 strategicReasons: [], strategicConcerns: [], recommendedScreeningQuestions: [],
             },
         };
-        const strongDeepBroadLabel: AIAnalysisResult = {
+        const strongDeepBroadLabel: ExtractedOpportunity = {
             type: 'JOB', title: 'Engineer', company: 'BetCo',
             industry: 'Other', location: 'Remote', remoteStatus: 'REMOTE', description: SCRAPED_DESCRIPTION,
             reasons: ['deep'], concerns: [], strategicCategory: 'STRATEGIC_FIT',
@@ -600,7 +599,7 @@ describe('runIngestion (fake-backed pipeline)', () => {
                 strategicReasons: [], strategicConcerns: [], recommendedScreeningQuestions: [],
             },
         };
-        const cleanDeep: AIAnalysisResult = {
+        const cleanDeep: ExtractedOpportunity = {
             type: 'JOB', title: 'Platform Engineer', company: 'BetCo',
             industry: 'Other', location: 'Remote', remoteStatus: 'REMOTE', description: SCRAPED_DESCRIPTION,
             reasons: ['deep'], concerns: [], strategicCategory: 'STRATEGIC_FIT',
@@ -684,7 +683,7 @@ describe('runIngestion (fake-backed pipeline)', () => {
         // with an EMPTY strategic block. Marking that DEEP would persist empty fields and flip the
         // cost gate to deep-done, so the pre-Pass-1 guard would block every retry. Instead the row
         // must keep its Pass-1 SHALLOW analysis and stay retryable.
-        const noiseDeep: AIAnalysisResult = {
+        const noiseDeep: ExtractedOpportunity = {
             type: 'NOISE', title: 'Unknown', company: 'Unknown', industry: 'Unknown',
             location: 'Unknown', remoteStatus: 'Unknown', description: SCRAPED_DESCRIPTION,
             reasons: [], concerns: ['AI Analysis failed'], strategicCategory: null,

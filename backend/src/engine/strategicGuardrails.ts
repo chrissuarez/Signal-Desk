@@ -107,7 +107,7 @@ export const applyScoreGuardrails = (
 
   // Hard veto: an excluded industry forces REJECT and caps any real score to 0. A null score
   // stays null — we force the category but must not fabricate a number (the #3/#4 null contract).
-  // The AI extractor only emits broad industry labels (aiService: "Marketing, Creative & Digital",
+  // The AI extractor only emits broad industry labels (the Gemini prompt: "Marketing, Creative & Digital",
   // "Other", …), so the granular veto list ("Gambling", "Adult Entertainment", "MLM") would never
   // match the industry field alone — scan the title/description too, the way penalties/tier-1 do.
   const excluded = settings.excludedIndustries.find(
