@@ -12,15 +12,16 @@
 
 import type { StrategicCategory } from '../../engine/strategicVocabulary.js';
 import type { StrategicAnalysis } from '../../engine/strategicAnalysis.js';
+import type { Preferences } from '../../engine/scoring.js';
 
-/** User scoring preferences, as persisted under settings key `user_preferences`. */
-export interface IngestionPreferences {
-  keywords: string[];
-  locations: string[];
-  locationWeights?: Record<string, number>;
-  industryWeights?: Record<string, number>;
-  minSalary?: number;
-}
+/**
+ * User scoring preferences, as persisted under settings key `user_preferences`.
+ *
+ * One shape with the scoring engine (issue #15): an alias of the engine's `Preferences`
+ * so the pipeline DTOs and `calculateFitScore` cannot drift. The validated read path
+ * lives in `ingestion/preferences.ts`.
+ */
+export type IngestionPreferences = Preferences;
 
 /** A normalized raw email digest yielded by the Intake adapter (one per Gmail message). */
 export interface RawSource {
