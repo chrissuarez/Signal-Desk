@@ -74,6 +74,21 @@ describe('parseGeminiResponse (#14) — whole-response contract', () => {
         const out = parseGeminiResponse(JSON.stringify(fullRow()));
         expect(out).toHaveLength(1);
     });
+
+    it('throws when a non-empty response yields zero usable rows (total loss ≠ silent)', () => {
+        // The model returned content but every row is structurally invalid → retry the digest.
+        expect(() => parseGeminiResponse(JSON.stringify([{ jobTitle: 'Engineer' }]))).toThrow(ExtractionError);
+        expect(() => parseGeminiResponse(JSON.stringify([{ type: 'JOB' }, { type: 'BUSINESS' }]))).toThrow(ExtractionError);
+    });
+
+    it('keeps the valid rows on a partial drop (does not fail the digest)', () => {
+        const out = parseGeminiResponse(JSON.stringify([fullRow({ title: 'Delivery Lead' }), { jobTitle: 'Dropped' }]));
+        expect(out.map((o) => o.title)).toEqual(['Delivery Lead']);
+    });
+
+    it('returns [] for a genuinely empty response without throwing (newsletter, no roles)', () => {
+        expect(parseGeminiResponse('[]')).toEqual([]);
+    });
 });
 
 describe('validateExtractedRow (#14) — per-row two-tier contract', () => {

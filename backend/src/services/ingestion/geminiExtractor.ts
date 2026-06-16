@@ -268,9 +268,32 @@ export const parseGeminiResponse = (textResponse: string): ExtractedOpportunity[
     }
 
     const rows = Array.isArray(parsed) ? parsed : [parsed];
-    return rows
+    const validated = rows
         .map(validateExtractedRow)
         .filter((r): r is ExtractedOpportunity => r !== null);
+
+    const dropped = rows.length - validated.length;
+    if (dropped > 0) {
+        console.warn(
+            `Extraction dropped ${dropped} structurally-invalid row(s) of ${rows.length} from a Gemini response.`,
+        );
+        // If the model returned rows but EVERY one was unusable, treat the whole extraction as a
+        // failure: throw so the orchestrator leaves the digest unmarked and retries it. A response
+        // we can salvage nothing from is far more likely a transient/prompt glitch worth another
+        // attempt than N genuinely-malformed roles — and silently marking it complete would lose
+        // the entire digest. A *partial* drop (some rows valid) is logged but does NOT fail the
+        // digest: the valid rows persist, and re-extraction can't recover a row the model keeps
+        // malforming — it would just re-pay every run (the reasoning that keeps a Pass-2 deep
+        // failure non-blocking, #12). A genuinely empty response ([]) drops nothing and is not a
+        // failure (a newsletter with no roles).
+        if (validated.length === 0) {
+            throw new ExtractionError(
+                `Gemini returned ${rows.length} row(s) but none passed structural validation`,
+            );
+        }
+    }
+
+    return validated;
 };
 
 /**
