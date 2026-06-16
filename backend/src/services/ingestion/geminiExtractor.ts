@@ -82,11 +82,14 @@ const nullableUrl = z.preprocess((v) => {
 
 /**
  * Validates the untrusted *identity* fields of one Gemini row. Structural failures
- * (`type` not one of the three, `title` missing/blank) raise a ZodError — the caller
- * drops the row. The `.transform` applies the soft `remoteStatus` coercion, appending a
- * concern rather than rejecting. The strategic block (`strategicCategory`,
- * `strategicAnalysis`) is validated separately in {@link validateExtractedRow} because it
- * reads the same flat object through the #2/#3 boundaries.
+ * (`type` not one of the three, or a JOB/BUSINESS row with a missing/blank `title`) raise a
+ * ZodError — the caller drops the row. A `NOISE` row needs no title: the prompt returns a
+ * lone `{type:"NOISE"}` for a digest with no roles, the orchestrator skips NOISE rows and
+ * never reads their title, and rejecting it would drop every row and falsely fail the digest
+ * (re-extracting the same newsletter every run). The `.transform` applies the soft
+ * `remoteStatus` coercion, appending a concern rather than rejecting. The strategic block
+ * (`strategicCategory`, `strategicAnalysis`) is validated separately in
+ * {@link validateExtractedRow} because it reads the same flat object through the #2/#3 boundaries.
  */
 export const ExtractedOpportunitySchema = z
     .object({
@@ -94,7 +97,7 @@ export const ExtractedOpportunitySchema = z
             (v) => (typeof v === 'string' ? v.trim().toUpperCase() : v),
             z.enum(['JOB', 'BUSINESS', 'NOISE']),
         ),
-        title: z.preprocess((v) => (typeof v === 'string' ? v.trim() : v), z.string().min(1)),
+        title: z.preprocess((v) => (typeof v === 'string' ? v.trim() : ''), z.string()),
         company: optionalString,
         description: z.preprocess((v) => (typeof v === 'string' ? v : ''), z.string()),
         industry: optionalString,
@@ -103,6 +106,10 @@ export const ExtractedOpportunitySchema = z
         sourceUrl: nullableUrl,
         reasons: stringArray,
         concerns: stringArray,
+    })
+    .refine((row) => row.type === 'NOISE' || row.title.length > 0, {
+        message: 'A JOB or BUSINESS row must have a non-empty title',
+        path: ['title'],
     })
     .transform((row) => {
         if (

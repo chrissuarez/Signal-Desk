@@ -89,6 +89,14 @@ describe('parseGeminiResponse (#14) — whole-response contract', () => {
     it('returns [] for a genuinely empty response without throwing (newsletter, no roles)', () => {
         expect(parseGeminiResponse('[]')).toEqual([]);
     });
+
+    it('completes a title-less NOISE digest without throwing (newsletter sentinel)', () => {
+        // The prompt returns a lone {type:NOISE} for a no-role digest; it has no title, but the
+        // orchestrator skips NOISE rows so the digest must still complete (not throw + re-extract).
+        const out = parseGeminiResponse('[{"type":"NOISE"}]');
+        expect(out).toHaveLength(1);
+        expect(out[0]?.type).toBe('NOISE');
+    });
 });
 
 describe('validateExtractedRow (#14) — per-row two-tier contract', () => {
@@ -98,6 +106,11 @@ describe('validateExtractedRow (#14) — per-row two-tier contract', () => {
 
     it('drops a structurally-invalid row: unrecognised type', () => {
         expect(validateExtractedRow(fullRow({ type: 'GOSSIP' }))).toBeNull();
+    });
+
+    it('accepts a title-less NOISE row (title is required only for JOB/BUSINESS)', () => {
+        expect(validateExtractedRow({ type: 'NOISE' })?.type).toBe('NOISE');
+        expect(validateExtractedRow({ type: 'JOB' })).toBeNull(); // JOB still needs a title
     });
 
     it('drops a non-object row', () => {
