@@ -261,9 +261,8 @@ const buildPrompt = (text: string): string => `
 /**
  * Parse + validate a raw Gemini response string into opportunities. Strips the ```json``` ``
  * fences, parses the JSON, and validates each row. Throws {@link ExtractionError} when the
- * *whole* response is unparseable JSON (a real failure, distinct from a validated empty
- * result); individual structurally-invalid rows are dropped and soft enum errors coerced.
- * Pure (no I/O) so it is unit-tested directly against canned model strings.
+ * *whole* response is unparseable JSON, OR when *any* row fails structural validation; soft
+ * enum errors coerce. Pure (no I/O) so it is unit-tested directly against canned model strings.
  */
 export const parseGeminiResponse = (textResponse: string): ExtractedOpportunity[] => {
     let parsed: unknown;
@@ -281,23 +280,19 @@ export const parseGeminiResponse = (textResponse: string): ExtractedOpportunity[
 
     const dropped = rows.length - validated.length;
     if (dropped > 0) {
-        console.warn(
-            `Extraction dropped ${dropped} structurally-invalid row(s) of ${rows.length} from a Gemini response.`,
+        // A structurally-invalid row (not an object, or a JOB/BUSINESS missing its title) can't be
+        // persisted. We must NOT compact it out: canonical URLs are positional (gmail://<msg>#<i>
+        // from the orchestrator's array index), so dropping a row would shift every later row's URL
+        // and corrupt identity across re-runs (a recovered role landing on a prior role's #i). Nor
+        // can we silently keep the survivors and let the digest be marked complete — the dropped
+        // role would be lost forever. So fail the whole extraction: throw, leaving the digest
+        // unmarked so the next run re-extracts at stable positions. A malformed row violates the
+        // explicit prompt schema and is rare/usually transient; re-extracting is far cheaper than
+        // corrupted URLs or a lost role. (NOISE rows are valid and need no title — see the schema —
+        // so a newsletter never trips this; a genuinely empty [] drops nothing and is not a failure.)
+        throw new ExtractionError(
+            `Gemini returned ${rows.length} row(s) but ${dropped} failed structural validation`,
         );
-        // If the model returned rows but EVERY one was unusable, treat the whole extraction as a
-        // failure: throw so the orchestrator leaves the digest unmarked and retries it. A response
-        // we can salvage nothing from is far more likely a transient/prompt glitch worth another
-        // attempt than N genuinely-malformed roles — and silently marking it complete would lose
-        // the entire digest. A *partial* drop (some rows valid) is logged but does NOT fail the
-        // digest: the valid rows persist, and re-extraction can't recover a row the model keeps
-        // malforming — it would just re-pay every run (the reasoning that keeps a Pass-2 deep
-        // failure non-blocking, #12). A genuinely empty response ([]) drops nothing and is not a
-        // failure (a newsletter with no roles).
-        if (validated.length === 0) {
-            throw new ExtractionError(
-                `Gemini returned ${rows.length} row(s) but none passed structural validation`,
-            );
-        }
     }
 
     return validated;

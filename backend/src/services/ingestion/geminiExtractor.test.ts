@@ -75,15 +75,16 @@ describe('parseGeminiResponse (#14) — whole-response contract', () => {
         expect(out).toHaveLength(1);
     });
 
-    it('throws when a non-empty response yields zero usable rows (total loss ≠ silent)', () => {
-        // The model returned content but every row is structurally invalid → retry the digest.
+    it('throws when any row fails structural validation (total loss → retry the digest)', () => {
         expect(() => parseGeminiResponse(JSON.stringify([{ jobTitle: 'Engineer' }]))).toThrow(ExtractionError);
         expect(() => parseGeminiResponse(JSON.stringify([{ type: 'JOB' }, { type: 'BUSINESS' }]))).toThrow(ExtractionError);
     });
 
-    it('keeps the valid rows on a partial drop (does not fail the digest)', () => {
-        const out = parseGeminiResponse(JSON.stringify([fullRow({ title: 'Delivery Lead' }), { jobTitle: 'Dropped' }]));
-        expect(out.map((o) => o.title)).toEqual(['Delivery Lead']);
+    it('throws on a PARTIAL structural drop rather than compacting (keeps canonical-URL indexes stable)', () => {
+        // Compacting [invalid, valid] → [valid] would persist the valid role at #0; a later clean
+        // re-extraction puts a different role at #0 → identity corruption. So fail + retry instead.
+        expect(() => parseGeminiResponse(JSON.stringify([{ jobTitle: 'Dropped' }, fullRow({ title: 'Delivery Lead' })])))
+            .toThrow(ExtractionError);
     });
 
     it('returns [] for a genuinely empty response without throwing (newsletter, no roles)', () => {
