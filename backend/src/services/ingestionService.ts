@@ -436,8 +436,10 @@ const processOpportunity = async (
                         const finalScored = deps.scoreReconcile({
                             title: finalAnalysis.title,
                             description: scraped.description,
-                            industry: finalAnalysis.industry,
-                            location: finalAnalysis.location,
+                            // Omit when absent (exactOptionalPropertyTypes): the extraction DTO now
+                            // types industry/location as optional, so an explicit undefined is rejected.
+                            ...(finalAnalysis.industry !== undefined ? { industry: finalAnalysis.industry } : {}),
+                            ...(finalAnalysis.location !== undefined ? { location: finalAnalysis.location } : {}),
                             preferences,
                         });
                         const finalStrategicFields = {
