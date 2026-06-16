@@ -125,9 +125,10 @@ export const runBackfill = async (
             // opportunities; the row is already one opportunity, so we take the first.
             const results = await deps.analyze(text);
             const analysis = results?.[0];
-            // The production analyzer SWALLOWS Gemini/parse failures into a NOISE row with an
-            // EMPTY strategic block. Persisting that would mark the row analyzed (depth set) and
-            // strand it forever, so a NOISE/absent result leaves the row at NULL for a later retry.
+            // A Gemini/parse failure now THROWS (#14), caught below — the row stays NULL, retryable.
+            // A genuine NOISE result (the stored text holds no role) returns a NOISE row: persisting
+            // its empty block would mark the row analyzed (depth set) and strand it, so a NOISE/absent
+            // result also leaves the row at NULL for a later retry.
             if (!analysis || analysis.type === 'NOISE') {
                 summary.skippedNoise++;
                 continue;

@@ -15,8 +15,7 @@ import { legacyScoreReconcile } from '../engine/scoreReconcile.js';
 import { DEFAULT_GUARDRAILS } from '../engine/strategicGuardrails.js';
 import { EMPTY_STRATEGIC_ANALYSIS } from '../engine/strategicAnalysis.js';
 import type { OpportunityRow, OpportunityInsert } from '../services/ingestion/persist.js';
-import type { AIAnalysisResult } from '../services/aiService.js';
-import type { IngestionPreferences } from '../services/ingestion/types.js';
+import type { ExtractedOpportunity, IngestionPreferences } from '../services/ingestion/types.js';
 
 const PREFERENCES: IngestionPreferences = {
     keywords: ['engineer', 'typescript', 'ai'],
@@ -24,7 +23,7 @@ const PREFERENCES: IngestionPreferences = {
 };
 
 /** A strong strategic block that should produce a non-null score + category. */
-const STRONG_ANALYSIS: AIAnalysisResult = {
+const STRONG_ANALYSIS: ExtractedOpportunity = {
     type: 'JOB', title: 'Re-analyzed Title', company: 'Acme',
     industry: '', location: 'Remote', remoteStatus: 'REMOTE', description: 'full text',
     reasons: ['deep reason'], concerns: [], strategicCategory: 'STRATEGIC_FIT',
@@ -38,7 +37,7 @@ const STRONG_ANALYSIS: AIAnalysisResult = {
     },
 };
 
-const NOISE_ANALYSIS: AIAnalysisResult = {
+const NOISE_ANALYSIS: ExtractedOpportunity = {
     type: 'NOISE', title: 'Newsletter', company: '', industry: '', location: '',
     remoteStatus: '', description: 'unrelated', reasons: [], concerns: [],
     strategicCategory: null, strategicAnalysis: EMPTY_STRATEGIC_ANALYSIS,
@@ -56,7 +55,7 @@ const makeRow = (over: Partial<OpportunityRow> & { id: number }): OpportunityRow
 } as OpportunityRow);
 
 /** A block that reconciles to RESOURCE_ADMIN_TRAP (HIGH trap risk) → routes SUPPRESS; still scored. */
-const TRAP_ANALYSIS: AIAnalysisResult = {
+const TRAP_ANALYSIS: ExtractedOpportunity = {
     ...STRONG_ANALYSIS,
     strategicAnalysis: { ...STRONG_ANALYSIS.strategicAnalysis, resourceAdminTrapRisk: 'HIGH' },
 };
@@ -176,7 +175,7 @@ describe('runBackfill', () => {
         // A JOB result whose strategic block was garbled to all-null by the AI boundary: not NOISE,
         // but computeStrategicScore returns null. Marking it SHALLOW would strand it (loader only
         // retries NULL depth), so it must be left NULL — the exact bug Codex flagged on PR #25.
-        const emptyBlockResult: AIAnalysisResult = {
+        const emptyBlockResult: ExtractedOpportunity = {
             ...STRONG_ANALYSIS,
             strategicCategory: null,
             strategicAnalysis: EMPTY_STRATEGIC_ANALYSIS,
