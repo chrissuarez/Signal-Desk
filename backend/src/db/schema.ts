@@ -112,3 +112,16 @@ export const settings = pgTable('settings', {
   value: jsonb('value').notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });
+
+// Per-digest extraction completion marker (#12). One row per ingested digest (Gmail
+// message), written by the orchestrator only after EVERY opportunity in that digest has
+// been persisted cleanly. The Cost Gate's Pass-1 checkpoint reads this row instead of the
+// old "is opportunity #0 present?" proxy — which marked a digest done the moment its first
+// opportunity landed, so a run that crashed after persisting #0 but before #1/#2/… skipped
+// the rest forever. Keying completion on a deliberate end-of-digest marker (not the
+// presence of any single opportunity) lets a partially-processed digest resume on the next
+// run, and also covers all-NOISE digests (which persist no opportunity rows at all).
+export const digestExtractions = pgTable('digest_extractions', {
+  messageId: text('message_id').primaryKey(),
+  extractedAt: timestamp('extracted_at').defaultNow().notNull(),
+});

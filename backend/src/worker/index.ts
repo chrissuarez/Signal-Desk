@@ -4,9 +4,14 @@ import { db } from '../db/index.js';
 import { opportunities } from '../db/schema.js';
 import { eq } from 'drizzle-orm';
 import { sendDailyDigest } from '../services/notificationService.js';
+import { backfillDigestMarkersOnce } from '../services/ingestion/costGate.js';
 
-export const initWorker = () => {
+export const initWorker = async () => {
     console.log('Initializing background worker...');
+
+    // #12: one-time transition seed for the per-digest completion marker, before any
+    // scheduled ingestion runs — so a legacy DB doesn't re-extract already-handled digests.
+    await backfillDigestMarkersOnce();
 
     // Run every 30 minutes
     cron.schedule('*/30 * * * *', async () => {

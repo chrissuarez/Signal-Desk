@@ -9,7 +9,7 @@
  */
 
 import { parseEmailBody, classifyOpportunity } from '../../engine/parser.js';
-import { analyzeOpportunityWithAI } from '../aiService.js';
+import { analyzeOpportunityWithAI, isAiAnalysisFailure } from '../aiService.js';
 import { EMPTY_STRATEGIC_ANALYSIS } from '../../engine/strategicAnalysis.js';
 import type { ExtractedOpportunity, RawSource } from './types.js';
 
@@ -18,6 +18,23 @@ export interface ExtractionAdapter {
   extract(source: RawSource): Promise<ExtractedOpportunity[]>;
 }
 
+/**
+ * Concern stamped on the single result the no-key heuristic fallback returns. Exported so the
+ * orchestrator can tell a *degraded* (heuristic, no-LLM) extraction apart from a genuine AI one
+ * and decline to finalize the digest — see {@link isHeuristicFallback}.
+ */
+export const NO_API_KEY_CONCERN = 'AI analysis skipped (no API key)';
+
+/**
+ * True when `results` is the no-key heuristic fallback (a lone row carrying
+ * {@link NO_API_KEY_CONCERN}) rather than a real AI extraction. The orchestrator uses this to
+ * avoid writing the per-digest completion marker (#12): the heuristic returns at most one row
+ * regardless of how many opportunities the digest holds and never runs the LLM, so marking it
+ * "fully extracted" would lose the rest of the digest and permanently skip it once a key exists.
+ */
+export const isHeuristicFallback = (results: ExtractedOpportunity[]): boolean =>
+  results.length === 1 && (results[0]?.concerns?.includes(NO_API_KEY_CONCERN) ?? false);
+
 /** Default Extraction adapter: AI when keyed, local parser fallback otherwise. */
 export const defaultExtraction: ExtractionAdapter = {
   async extract(source) {
@@ -25,7 +42,16 @@ export const defaultExtraction: ExtractionAdapter = {
 
     if (process.env.GEMINI_API_KEY) {
       console.log(`Analyzing message ${messageId} with AI (Length: ${body.length})...`);
-      return await analyzeOpportunityWithAI(body);
+      const results = await analyzeOpportunityWithAI(body);
+      // analyzeOpportunityWithAI swallows a Gemini/parse failure into a sentinel NOISE row
+      // rather than throwing. Surface it as a real extraction error here so the orchestrator
+      // records it and leaves the digest UNMARKED (#12) — otherwise a swallowed failure would
+      // look like a clean all-NOISE digest, get marked complete, and skip the digest forever,
+      // losing every real opportunity in it. Throwing lets the next run re-extract and recover.
+      if (isAiAnalysisFailure(results)) {
+        throw new Error(`AI extraction failed for message ${messageId}`);
+      }
+      return results;
     }
 
     const type = classifyOpportunity(body);
@@ -37,7 +63,7 @@ export const defaultExtraction: ExtractionAdapter = {
         company: parsed.company,
         description: body,
         reasons: [],
-        concerns: ['AI analysis skipped (no API key)'],
+        concerns: [NO_API_KEY_CONCERN],
         strategicCategory: null,
         strategicAnalysis: EMPTY_STRATEGIC_ANALYSIS,
       },

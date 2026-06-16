@@ -10,20 +10,32 @@
  */
 
 import { db } from '../../db/index.js';
-import { opportunities } from '../../db/schema.js';
-import { eq } from 'drizzle-orm';
+import { digestExtractions } from '../../db/schema.js';
+import { eq, sql } from 'drizzle-orm';
 import type { OpportunityRow } from './persist.js';
+import { NO_API_KEY_CONCERN } from './extraction.js';
 
 export interface CostGate {
   /**
-   * Pass-1 checkpoint: has this digest already been extracted?
+   * Pass-1 checkpoint: has this digest already been fully extracted?
    *
-   * KNOWN LIMITATION: proxies on the presence of the first indexed opportunity
-   * (`gmail://<messageId>#0`) as a stand-in for "digest processed". A prior run that
-   * crashed before persisting #0 will be re-extracted (re-paying the AI cost). A real
-   * per-digest completion marker replaces this in issue #12 without re-cutting the seam.
+   * Reads a per-digest completion marker (the `digest_extractions` row, #12). That row is
+   * written by `markDigestExtracted` only after every opportunity in the digest persisted
+   * cleanly — so a digest that crashed partway is reported NOT done and re-extracted on the
+   * next run, recovering the opportunities the crash never persisted. This replaced the
+   * earlier proxy (presence of opportunity `#0`), which flipped to "done" the instant the
+   * first opportunity landed and so skipped a partially-written digest forever.
    */
   digestAlreadyExtracted(messageId: string): Promise<boolean>;
+
+  /**
+   * Record that a digest has been fully extracted — the companion writer to
+   * `digestAlreadyExtracted`. The orchestrator calls this once, at the end of a digest, only
+   * when no opportunity in it errored, so the completion marker is a true "all persisted"
+   * signal rather than a "started" one. Idempotent: re-marking an already-marked digest
+   * (e.g. on a `force` re-run) is a no-op.
+   */
+  markDigestExtracted(messageId: string): Promise<void>;
 
   /**
    * Pass-2 checkpoint: has the deep step already run for this opportunity?
@@ -41,13 +53,78 @@ export interface CostGate {
 /** Drizzle-backed Cost Gate (today's behaviour). */
 export const dbCostGate: CostGate = {
   async digestAlreadyExtracted(messageId) {
-    const proxy = await db.query.opportunities.findFirst({
-      where: eq(opportunities.canonicalUrl, `gmail://${messageId}#0`),
+    const marker = await db.query.digestExtractions.findFirst({
+      where: eq(digestExtractions.messageId, messageId),
     });
-    return proxy !== undefined;
+    return marker !== undefined;
+  },
+
+  async markDigestExtracted(messageId) {
+    // onConflictDoNothing keeps this idempotent: a `force` re-run (which bypasses the read
+    // check) re-marks a digest it already completed without erroring on the primary key.
+    await db
+      .insert(digestExtractions)
+      .values({ messageId })
+      .onConflictDoNothing({ target: digestExtractions.messageId });
   },
 
   deepAlreadyDone(existing) {
     return existing?.analysisDepth === 'DEEP';
   },
+};
+
+/**
+ * One-time transition seed (#12). Marks every digest that already has a persisted opportunity
+ * as extracted, so switching the Pass-1 check from the old `#0`-presence proxy to the
+ * `digest_extractions` marker doesn't make the first run after deploy treat every
+ * already-handled Gmail digest as new and re-pay the Gemini extraction cost for it.
+ *
+ * Why here and not in migration 0006: the project applies schema with `drizzle-kit push`,
+ * which ignores hand-written data SQL in migration files — so the backfill has to run from
+ * code. `initWorker` calls this at startup. Idempotent via ON CONFLICT DO NOTHING, and the
+ * caller skips it once any marker exists, so it does real work at most once.
+ *
+ * The seed mirrors the OLD completion signal exactly: the old proxy reported a digest done iff
+ * its `gmail://<msg>#0` row existed, so we seed a marker for precisely those messageIds. Keying
+ * on `#0` (not "any row") preserves the one case the old proxy left recoverable — a legacy
+ * partial that failed on `#0` but persisted a later `#1` had no `#0` row, so the old code
+ * re-extracted it to recover the missing first opportunity; seeding "any row" would instead mark
+ * it done and strand `#0`. Never-persisted opportunities of a digest that DID have `#0` aren't
+ * reconstructable (and weren't under the old code either). Returns the count seeded.
+ *
+ * Also excluded (#12, Codex P2): a `#0` row from the no-key heuristic fallback (carrying
+ * NO_API_KEY_CONCERN — the fallback only ever produces `#0`). Marking it would make the first
+ * keyed run skip the digest at the pre-extraction `digestAlreadyExtracted` check, before the
+ * per-opportunity reprocess path that upgrades a heuristic row can run — stranding it on
+ * heuristic data. Left unseeded, that digest re-extracts and the keyed run replaces the placeholder.
+ */
+export const seedDigestMarkersFromLegacy = async (): Promise<number> => {
+  const result = await db.execute(sql`
+    INSERT INTO digest_extractions (message_id)
+    SELECT substring(canonical_url from '^gmail://(.*)#0$')
+    FROM opportunities
+    WHERE canonical_url ~ '^gmail://.*#0$'
+      AND substring(canonical_url from '^gmail://(.*)#0$') IS NOT NULL
+      AND NOT (concerns IS NOT NULL AND jsonb_exists(concerns, ${NO_API_KEY_CONCERN}))
+    ON CONFLICT (message_id) DO NOTHING
+  `);
+  return result.rowCount ?? 0;
+};
+
+/**
+ * Run the #12 transition seed only when the markers table is still empty — so it transitions a
+ * legacy database exactly once and is a cheap no-op on every boot thereafter. Safe on a fresh
+ * install (no opportunities → seeds nothing). Never throws into the caller; logs and swallows.
+ */
+export const backfillDigestMarkersOnce = async (): Promise<void> => {
+  try {
+    const existing = await db.query.digestExtractions.findFirst();
+    if (existing) return; // already seeded, or markers written by a prior run — nothing to do
+    const seeded = await seedDigestMarkersFromLegacy();
+    if (seeded > 0) {
+      console.log(`Cost Gate: seeded ${seeded} digest completion marker(s) from existing opportunities (#12 transition).`);
+    }
+  } catch (error) {
+    console.error('Cost Gate: digest-marker backfill failed (non-fatal):', error);
+  }
 };

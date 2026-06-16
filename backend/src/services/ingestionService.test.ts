@@ -15,6 +15,7 @@ import { describe, it, expect } from 'vitest';
 import { runIngestion, defaultDeps, mergeGuardrailSettings, type IngestionDeps } from './ingestionService.js';
 import type { PersistAdapter, OpportunityRow, OpportunityInsert } from './ingestion/persist.js';
 import type { ExtractedOpportunity, RawSource } from './ingestion/types.js';
+import { NO_API_KEY_CONCERN } from './ingestion/extraction.js';
 import type { ScrapedContent } from './scraperService.js';
 import type { AIAnalysisResult } from './aiService.js';
 import { EMPTY_STRATEGIC_ANALYSIS } from '../engine/strategicAnalysis.js';
@@ -129,6 +130,7 @@ const makeDeps = (alerted: OpportunityRow[]) => {
         strategicAnalysis: { analyze: async () => [FINAL_ANALYSIS] },
         costGate: {
             digestAlreadyExtracted: async (id) => id === 'msgB',
+            markDigestExtracted: async () => {},
             deepAlreadyDone: () => false,
         },
         sendAlert: async (row) => { alerted.push(row); },
@@ -246,7 +248,7 @@ describe('runIngestion (fake-backed pipeline)', () => {
             persist,
             intake: { fetchSources: async () => [SOURCES[0]!] },
             extraction: { extract: async () => [standout] },
-            costGate: { digestAlreadyExtracted: async () => false, deepAlreadyDone: () => false },
+            costGate: { digestAlreadyExtracted: async () => false, markDigestExtracted: async () => {}, deepAlreadyDone: () => false },
             sendAlert: async (row) => { alerted.push(row); },
             loadGuardrails: async () => DEFAULT_GUARDRAILS,
             loadPreferences: async () => ({ keywords: ['engineer'], locations: [], locationWeights: {} }),
@@ -301,7 +303,7 @@ describe('runIngestion (fake-backed pipeline)', () => {
             preFilter: () => true, // force Pass 2; the gate's matching is unit-tested separately
             deepScrape: { scrape: async (url): Promise<ScrapedContent> => ({ title: 't', description: SCRAPED_DESCRIPTION, url }) },
             strategicAnalysis: { analyze: async () => [promoteFinal] },
-            costGate: { digestAlreadyExtracted: async () => false, deepAlreadyDone: () => false },
+            costGate: { digestAlreadyExtracted: async () => false, markDigestExtracted: async () => {}, deepAlreadyDone: () => false },
             sendAlert: async (row) => { alerted.push(row); },
             loadGuardrails: async () => DEFAULT_GUARDRAILS,
             loadPreferences: async () => ({ keywords: ['engineer'], locations: ['remote'], locationWeights: {} }),
@@ -345,7 +347,7 @@ describe('runIngestion (fake-backed pipeline)', () => {
             extraction: { extract: async () => [alertExtracted] },
             preFilter: () => true, // force Pass 2; the gate's matching is unit-tested separately
             deepScrape: { scrape: async () => { throw new Error('boom: scrape timed out'); } },
-            costGate: { digestAlreadyExtracted: async () => false, deepAlreadyDone: () => false },
+            costGate: { digestAlreadyExtracted: async () => false, markDigestExtracted: async () => {}, deepAlreadyDone: () => false },
             sendAlert: async (row) => { alerted.push(row); },
             loadGuardrails: async () => DEFAULT_GUARDRAILS,
             loadPreferences: async () => ({ keywords: ['engineer'], locations: ['remote'], locationWeights: {} }),
@@ -390,7 +392,7 @@ describe('runIngestion (fake-backed pipeline)', () => {
             ...defaultDeps, persist,
             intake: { fetchSources: async () => [SOURCES[0]!] },
             extraction: { extract: async () => [trapRow] },
-            costGate: { digestAlreadyExtracted: async () => false, deepAlreadyDone: () => false },
+            costGate: { digestAlreadyExtracted: async () => false, markDigestExtracted: async () => {}, deepAlreadyDone: () => false },
             sendAlert: async () => {},
             loadGuardrails: async () => DEFAULT_GUARDRAILS,
             loadPreferences: async () => ({ keywords: [], locations: [] }),
@@ -424,7 +426,7 @@ describe('runIngestion (fake-backed pipeline)', () => {
             ...defaultDeps, persist,
             intake: { fetchSources: async () => [SOURCES[0]!] },
             extraction: { extract: async () => [excludedRow] },
-            costGate: { digestAlreadyExtracted: async () => false, deepAlreadyDone: () => false },
+            costGate: { digestAlreadyExtracted: async () => false, markDigestExtracted: async () => {}, deepAlreadyDone: () => false },
             sendAlert: async () => {},
             loadGuardrails: async () => DEFAULT_GUARDRAILS,
             loadPreferences: async () => ({ keywords: [], locations: [] }),
@@ -459,7 +461,7 @@ describe('runIngestion (fake-backed pipeline)', () => {
                     }];
                 },
             },
-            costGate: { digestAlreadyExtracted: async () => false, deepAlreadyDone: () => false },
+            costGate: { digestAlreadyExtracted: async () => false, markDigestExtracted: async () => {}, deepAlreadyDone: () => false },
             sendAlert: async () => {},
             loadGuardrails: async () => DEFAULT_GUARDRAILS,
             loadPreferences: async () => ({ keywords: ['engineer'], locations: [] }),
@@ -515,7 +517,7 @@ describe('runIngestion (fake-backed pipeline)', () => {
             preFilter: () => true, // force Pass 2 regardless of Fit Score
             deepScrape: { scrape: async (url): Promise<ScrapedContent> => ({ title: 't', description: SCRAPED_DESCRIPTION, url }) },
             strategicAnalysis: { analyze: async () => [strongDeepNoIndustry] },
-            costGate: { digestAlreadyExtracted: async () => false, deepAlreadyDone: () => false },
+            costGate: { digestAlreadyExtracted: async () => false, markDigestExtracted: async () => {}, deepAlreadyDone: () => false },
             sendAlert: async () => {},
             loadGuardrails: async () => DEFAULT_GUARDRAILS,
             loadPreferences: async () => ({ keywords: [], locations: [] }),
@@ -567,7 +569,7 @@ describe('runIngestion (fake-backed pipeline)', () => {
             preFilter: () => true, // force Pass 2 regardless of Fit Score
             deepScrape: { scrape: async (url): Promise<ScrapedContent> => ({ title: 't', description: SCRAPED_DESCRIPTION, url }) },
             strategicAnalysis: { analyze: async () => [strongDeepBroadLabel] },
-            costGate: { digestAlreadyExtracted: async () => false, deepAlreadyDone: () => false },
+            costGate: { digestAlreadyExtracted: async () => false, markDigestExtracted: async () => {}, deepAlreadyDone: () => false },
             sendAlert: async () => {},
             loadGuardrails: async () => DEFAULT_GUARDRAILS,
             loadPreferences: async () => ({ keywords: [], locations: [] }),
@@ -618,7 +620,7 @@ describe('runIngestion (fake-backed pipeline)', () => {
             preFilter: () => true,
             deepScrape: { scrape: async (url): Promise<ScrapedContent> => ({ title: 't', description: SCRAPED_DESCRIPTION, url }) },
             strategicAnalysis: { analyze: async () => [cleanDeep] },
-            costGate: { digestAlreadyExtracted: async () => false, deepAlreadyDone: () => false },
+            costGate: { digestAlreadyExtracted: async () => false, markDigestExtracted: async () => {}, deepAlreadyDone: () => false },
             sendAlert: async () => {},
             loadGuardrails: async () => DEFAULT_GUARDRAILS,
             loadPreferences: async () => ({ keywords: [], locations: [] }),
@@ -659,7 +661,7 @@ describe('runIngestion (fake-backed pipeline)', () => {
             deepScrape: { scrape: async (url): Promise<ScrapedContent> => ({ title: 't', description: SCRAPED_DESCRIPTION, url }) },
             strategicAnalysis: { analyze: async () => [FINAL_ANALYSIS] },
             // Real deepAlreadyDone (keys on analysisDepth); only the digest extraction gate is faked.
-            costGate: { digestAlreadyExtracted: async () => false, deepAlreadyDone: defaultDeps.costGate.deepAlreadyDone },
+            costGate: { digestAlreadyExtracted: async () => false, markDigestExtracted: async () => {}, deepAlreadyDone: defaultDeps.costGate.deepAlreadyDone },
             sendAlert: async () => {},
             loadGuardrails: async () => DEFAULT_GUARDRAILS,
             loadPreferences: async () => ({ keywords: [], locations: [] }),
@@ -707,7 +709,7 @@ describe('runIngestion (fake-backed pipeline)', () => {
             preFilter: () => true,
             deepScrape: { scrape: async (url): Promise<ScrapedContent> => ({ title: 't', description: SCRAPED_DESCRIPTION, url }) },
             strategicAnalysis: { analyze: async () => [noiseDeep] },
-            costGate: { digestAlreadyExtracted: async () => false, deepAlreadyDone: defaultDeps.costGate.deepAlreadyDone },
+            costGate: { digestAlreadyExtracted: async () => false, markDigestExtracted: async () => {}, deepAlreadyDone: defaultDeps.costGate.deepAlreadyDone },
             sendAlert: async () => {},
             loadGuardrails: async () => DEFAULT_GUARDRAILS,
             loadPreferences: async () => ({ keywords: [], locations: [] }),
@@ -723,6 +725,293 @@ describe('runIngestion (fake-backed pipeline)', () => {
         expect(summary.errors.some((e) => e.stage === 'deepScrape')).toBe(true); // failure surfaced
         // The cost gate now allows a retry: a SHALLOW row is not deep-done.
         expect(defaultDeps.costGate.deepAlreadyDone(row)).toBe(false);
+    });
+
+    it('marks a cleanly-extracted digest and skips it on the next run via the marker (#12)', async () => {
+        // A digest whose opportunities all persist without error is marked extracted; a second
+        // run reads that completion marker and cost-skips the whole digest — no repeat
+        // extraction LLM call. This is the happy-path the marker must preserve.
+        const marked = new Set<string>();
+        const { adapter: persist, rows } = makePersistDouble();
+        const job: ExtractedOpportunity = {
+            type: 'JOB', title: 'Engineer', company: 'Acme', description: 'A role',
+            sourceUrl: null, reasons: [], concerns: [], strategicCategory: null,
+            strategicAnalysis: EMPTY_STRATEGIC_ANALYSIS,
+        };
+        let extractCalls = 0;
+        const deps: IngestionDeps = {
+            ...defaultDeps, persist,
+            intake: { fetchSources: async () => [SOURCES[0]!] },
+            extraction: { extract: async () => { extractCalls++; return [job]; } },
+            costGate: {
+                digestAlreadyExtracted: async (id) => marked.has(id),
+                markDigestExtracted: async (id) => { marked.add(id); },
+                deepAlreadyDone: () => false,
+            },
+            sendAlert: async () => {},
+            loadGuardrails: async () => DEFAULT_GUARDRAILS,
+            loadPreferences: async () => ({ keywords: ['engineer'], locations: [] }),
+        };
+
+        const first = await runIngestion({}, deps);
+        expect(first.created).toBe(1);
+        expect(extractCalls).toBe(1);
+        expect(marked.has('msgA')).toBe(true);    // clean digest → marked extracted
+
+        const second = await runIngestion({}, deps);
+        expect(second.costSkipped).toBe(1);       // marker read → whole digest skipped
+        expect(second.extracted).toBe(0);
+        expect(extractCalls).toBe(1);             // no second extraction LLM call
+        expect(rows.size).toBe(1);
+    });
+
+    it('re-extracts a digest that failed after persisting #0, instead of skipping it forever (#12)', async () => {
+        // The reported bug: a prior run persisted #0 then failed before #1, so the old
+        // #0-presence proxy treated the digest as done and #1 was lost forever. With the
+        // completion marker, the half-written digest is left UNMARKED — so the next run does
+        // not skip it: it re-extracts and recovers #1.
+        const marked = new Set<string>();
+        const { adapter: realPersist, rows } = makePersistDouble();
+        // Persist double that throws on opportunity #1 during the first run only, simulating a
+        // crash after #0 landed but before the rest of the digest was written.
+        let failSecondOpportunity = true;
+        const persist: PersistAdapter = {
+            ...realPersist,
+            async upsertByCanonicalUrl(values, conflictSet) {
+                if (failSecondOpportunity && values.canonicalUrl === 'gmail://msgA#1') {
+                    throw new Error('boom: persist crashed after #0');
+                }
+                return realPersist.upsertByCanonicalUrl(values, conflictSet);
+            },
+        };
+        const mkJob = (title: string): ExtractedOpportunity => ({
+            type: 'JOB', title, company: 'Acme', description: 'A role',
+            sourceUrl: null, reasons: [], concerns: [], strategicCategory: null,
+            strategicAnalysis: EMPTY_STRATEGIC_ANALYSIS,
+        });
+        const twoJobs = [mkJob('Engineer Zero'), mkJob('Engineer One')];
+        const deps: IngestionDeps = {
+            ...defaultDeps, persist,
+            intake: { fetchSources: async () => [SOURCES[0]!] },
+            extraction: { extract: async () => twoJobs },
+            costGate: {
+                digestAlreadyExtracted: async (id) => marked.has(id),
+                markDigestExtracted: async (id) => { marked.add(id); },
+                deepAlreadyDone: () => false,
+            },
+            sendAlert: async () => {},
+            loadGuardrails: async () => DEFAULT_GUARDRAILS,
+            loadPreferences: async () => ({ keywords: ['engineer'], locations: [] }),
+        };
+
+        // Run 1: #0 persists, #1 throws (isolated + recorded). The digest is NOT marked.
+        const first = await runIngestion({}, deps);
+        expect(rows.get('gmail://msgA#0')?.title).toBe('Engineer Zero');
+        expect(rows.get('gmail://msgA#1')).toBeUndefined();              // lost in the crash
+        expect(first.errors.some((e) => e.canonicalUrl === 'gmail://msgA#1')).toBe(true);
+        expect(marked.has('msgA')).toBe(false);                          // half-written → unmarked
+
+        // Run 2: the gate sees no marker, so it does NOT skip — it re-extracts and recovers #1.
+        failSecondOpportunity = false;
+        const second = await runIngestion({}, deps);
+        expect(second.costSkipped).toBe(0);                              // not skipped: bug fixed
+        expect(rows.get('gmail://msgA#1')?.title).toBe('Engineer One');  // recovered
+        expect(marked.has('msgA')).toBe(true);                           // now clean → marked
+    });
+
+    it('does not mark a digest whose extraction failed, so it is retried (#12, Codex P1)', async () => {
+        // A swallowed Gemini/parse failure surfaces as a thrown extraction (see extraction.ts,
+        // which converts the sentinel NOISE row into an error). The source-level catch records it
+        // and the digest is left UNMARKED — otherwise a failed extraction would look like a clean
+        // all-NOISE digest, get marked, and skip the digest forever, losing every real role in it.
+        const marked = new Set<string>();
+        const { adapter: persist, rows } = makePersistDouble();
+        const job: ExtractedOpportunity = {
+            type: 'JOB', title: 'Engineer', company: 'Acme', description: 'A role',
+            sourceUrl: null, reasons: [], concerns: [], strategicCategory: null,
+            strategicAnalysis: EMPTY_STRATEGIC_ANALYSIS,
+        };
+        let failExtraction = true;
+        const deps: IngestionDeps = {
+            ...defaultDeps, persist,
+            intake: { fetchSources: async () => [SOURCES[0]!] },
+            extraction: { extract: async () => {
+                if (failExtraction) throw new Error('AI extraction failed for message msgA');
+                return [job];
+            } },
+            costGate: {
+                digestAlreadyExtracted: async (id) => marked.has(id),
+                markDigestExtracted: async (id) => { marked.add(id); },
+                deepAlreadyDone: () => false,
+            },
+            sendAlert: async () => {},
+            loadGuardrails: async () => DEFAULT_GUARDRAILS,
+            loadPreferences: async () => ({ keywords: ['engineer'], locations: [] }),
+        };
+
+        // Run 1: extraction fails → recorded as a source error, digest left unmarked.
+        const first = await runIngestion({}, deps);
+        expect(first.errors.some((e) => e.stage === 'source' && e.messageId === 'msgA')).toBe(true);
+        expect(marked.has('msgA')).toBe(false);   // failed extraction → NOT marked
+        expect(rows.size).toBe(0);
+
+        // Run 2: no marker → not skipped → re-extracts and recovers the real opportunity.
+        failExtraction = false;
+        const second = await runIngestion({}, deps);
+        expect(second.costSkipped).toBe(0);       // not skipped: failure was retried
+        expect(rows.get('gmail://msgA#0')?.title).toBe('Engineer');
+        expect(marked.has('msgA')).toBe(true);    // now clean → marked
+    });
+
+    it('does not mark a no-key heuristic-fallback digest, so a later AI run re-extracts it (#12, Codex P2)', async () => {
+        // Without GEMINI_API_KEY, defaultExtraction returns a single heuristic row carrying
+        // NO_API_KEY_CONCERN — at most one row no matter how many opportunities the digest holds,
+        // and no LLM ran. Marking it "fully extracted" would lose the rest of the digest (and any
+        // NOISE-classified body persists nothing) and skip it forever once a key is added. So a
+        // degraded fallback digest must stay UNMARKED: the next run re-extracts (with AI once keyed).
+        const marked = new Set<string>();
+        const { adapter: persist, rows } = makePersistDouble();
+        const fallbackNoise: ExtractedOpportunity = {
+            type: 'NOISE', title: 'Job Alerts', company: 'Unknown', description: 'digest body',
+            sourceUrl: null, reasons: [], concerns: [NO_API_KEY_CONCERN], strategicCategory: null,
+            strategicAnalysis: EMPTY_STRATEGIC_ANALYSIS,
+        };
+        const realJob: ExtractedOpportunity = {
+            type: 'JOB', title: 'Engineer', company: 'Acme', description: 'A role',
+            sourceUrl: null, reasons: [], concerns: [], strategicCategory: null,
+            strategicAnalysis: EMPTY_STRATEGIC_ANALYSIS,
+        };
+        let keyed = false; // flips to the real AI extraction once a key is configured
+        const deps: IngestionDeps = {
+            ...defaultDeps, persist,
+            intake: { fetchSources: async () => [SOURCES[0]!] },
+            extraction: { extract: async () => (keyed ? [realJob] : [fallbackNoise]) },
+            costGate: {
+                digestAlreadyExtracted: async (id) => marked.has(id),
+                markDigestExtracted: async (id) => { marked.add(id); },
+                deepAlreadyDone: () => false,
+            },
+            sendAlert: async () => {},
+            loadGuardrails: async () => DEFAULT_GUARDRAILS,
+            loadPreferences: async () => ({ keywords: ['engineer'], locations: [] }),
+        };
+
+        // Run 1 (no key): heuristic NOISE persists nothing and the digest is left UNMARKED.
+        const first = await runIngestion({}, deps);
+        expect(first.errors.length).toBe(0);      // not an error — just degraded
+        expect(rows.size).toBe(0);
+        expect(marked.has('msgA')).toBe(false);   // degraded fallback → NOT marked
+
+        // Run 2 (key now set): not skipped → the real AI extraction recovers the opportunity.
+        keyed = true;
+        const second = await runIngestion({}, deps);
+        expect(second.costSkipped).toBe(0);       // not skipped: fallback never finalized it
+        expect(rows.get('gmail://msgA#0')?.title).toBe('Engineer');
+        expect(marked.has('msgA')).toBe(true);    // genuine AI extraction → now marked
+    });
+
+    it('reprocesses a persisted no-key heuristic row on the later keyed run before finalizing (#12, Codex P2)', async () => {
+        // A no-key run that classified the digest as a JOB persists gmail://msgA#0 with the
+        // heuristic data (carrying NO_API_KEY_CONCERN) and leaves the digest unmarked. On the
+        // later keyed run, ordinary dedup would skip that existing canonical URL — so the row
+        // would never be replaced with the genuine AI extraction, yet the marker would be written,
+        // stranding a single-opportunity digest on heuristic data forever. The heuristic row must
+        // instead be reprocessed (upgraded) before the digest is finalized.
+        const marked = new Set<string>();
+        const { adapter: persist, rows } = makePersistDouble();
+        const heuristicJob: ExtractedOpportunity = {
+            type: 'JOB', title: 'Weekly listings', company: 'Unknown', description: 'digest body',
+            sourceUrl: null, reasons: [], concerns: [NO_API_KEY_CONCERN], strategicCategory: null,
+            strategicAnalysis: EMPTY_STRATEGIC_ANALYSIS,
+        };
+        const aiJob: ExtractedOpportunity = {
+            type: 'JOB', title: 'Senior Engineer', company: 'Acme', description: 'A real role',
+            sourceUrl: null, reasons: ['ai reason'], concerns: [], strategicCategory: null,
+            strategicAnalysis: EMPTY_STRATEGIC_ANALYSIS,
+        };
+        let keyed = false;
+        const deps: IngestionDeps = {
+            ...defaultDeps, persist,
+            intake: { fetchSources: async () => [SOURCES[0]!] },
+            extraction: { extract: async () => (keyed ? [aiJob] : [heuristicJob]) },
+            costGate: {
+                digestAlreadyExtracted: async (id) => marked.has(id),
+                markDigestExtracted: async (id) => { marked.add(id); },
+                deepAlreadyDone: () => false,
+            },
+            sendAlert: async () => {},
+            loadGuardrails: async () => DEFAULT_GUARDRAILS,
+            loadPreferences: async () => ({ keywords: ['engineer'], locations: [] }),
+        };
+
+        // Run 1 (no key): heuristic row persisted, digest left unmarked.
+        await runIngestion({}, deps);
+        expect(rows.get('gmail://msgA#0')?.title).toBe('Weekly listings');
+        expect(rows.get('gmail://msgA#0')?.concerns).toContain(NO_API_KEY_CONCERN);
+        expect(marked.has('msgA')).toBe(false);
+
+        // Run 2 (keyed, NON-force): the heuristic row is reprocessed — not skipped — and replaced
+        // with the genuine AI extraction; only then is the digest finalized.
+        keyed = true;
+        const second = await runIngestion({}, deps);
+        expect(second.costSkipped).toBe(0);
+        expect(rows.get('gmail://msgA#0')?.title).toBe('Senior Engineer');        // upgraded
+        expect(rows.get('gmail://msgA#0')?.concerns).not.toContain(NO_API_KEY_CONCERN);
+        expect(marked.has('msgA')).toBe(true);                                     // now finalized
+
+        // Run 3 (keyed): the upgraded row is a genuine extraction, so ordinary dedup applies again.
+        const third = await runIngestion({}, deps);
+        expect(third.costSkipped).toBe(1);   // marker now skips the whole digest
+    });
+
+    it('marks a digest whose Pass-1 persisted even though the Pass-2 deep scrape failed (#12, Codex P2)', async () => {
+        // Pass 1 extracts + persists the opportunity (ALERT, SHALLOW), then the deep scrape throws
+        // — recorded as a 'deepScrape' error. That Pass-2 enrichment failure must NOT block the
+        // completion marker: the row is already persisted (retryable via a forced reprocess), and a
+        // non-force re-extraction can't recover the deep data anyway (dedup returns before Pass 2),
+        // so leaving it unmarked would just burn one more extraction call every run.
+        const marked = new Set<string>();
+        const { adapter: persist, rows } = makePersistDouble();
+        const alertExtracted: ExtractedOpportunity = {
+            type: 'JOB', title: 'Engineer', company: 'Flaky',
+            description: 'A role', location: 'Remote', sourceUrl: 'https://example.com/flaky',
+            reasons: [], concerns: [], strategicCategory: null,
+            strategicAnalysis: {
+                consultancyAlignment: 95, deliveryVisibility: 95, commercialProximity: 95,
+                buyerEnvironmentFit: 95, seniorityScope: 95,
+                resourceAdminTrapRisk: 'LOW', seoComfortZoneRisk: 'LOW',
+                realRoleInterpretation: 'strong', consultancyRelevance: 'direct',
+                strategicReasons: [], strategicConcerns: [], recommendedScreeningQuestions: [],
+            },
+        };
+        let extractCalls = 0;
+        const deps: IngestionDeps = {
+            ...defaultDeps, persist,
+            intake: { fetchSources: async () => [SOURCES[0]!] },
+            extraction: { extract: async () => { extractCalls++; return [alertExtracted]; } },
+            preFilter: () => true, // force Pass 2 so the deep scrape is attempted
+            deepScrape: { scrape: async () => { throw new Error('boom: scrape timed out'); } },
+            costGate: {
+                digestAlreadyExtracted: async (id) => marked.has(id),
+                markDigestExtracted: async (id) => { marked.add(id); },
+                deepAlreadyDone: () => false,
+            },
+            sendAlert: async () => {},
+            loadGuardrails: async () => DEFAULT_GUARDRAILS,
+            loadPreferences: async () => ({ keywords: ['engineer'], locations: ['remote'], locationWeights: {} }),
+        };
+
+        // Run 1: Pass-1 row persists (SHALLOW), deep scrape fails (recorded), digest IS marked.
+        const first = await runIngestion({}, deps);
+        expect(rows.get('gmail://msgA#0')?.analysisDepth).toBe('SHALLOW');
+        expect(first.errors.some((e) => e.stage === 'deepScrape')).toBe(true);
+        expect(first.errors.some((e) => e.stage !== 'deepScrape')).toBe(false); // only the deep failure
+        expect(marked.has('msgA')).toBe(true);   // Pass-1 succeeded → finalized despite the deep failure
+
+        // Run 2: the marker cost-skips the digest — no wasted re-extraction.
+        const second = await runIngestion({}, deps);
+        expect(second.costSkipped).toBe(1);
+        expect(extractCalls).toBe(1);            // not re-extracted
     });
 });
 

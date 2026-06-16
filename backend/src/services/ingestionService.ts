@@ -22,7 +22,7 @@ import { settings } from '../db/schema.js';
 import { eq } from 'drizzle-orm';
 import { dbPersist, type PersistAdapter, type OpportunityRow } from './ingestion/persist.js';
 import { gmailIntake, type IntakeAdapter } from './ingestion/intake.js';
-import { defaultExtraction, type ExtractionAdapter } from './ingestion/extraction.js';
+import { defaultExtraction, isHeuristicFallback, NO_API_KEY_CONCERN, type ExtractionAdapter } from './ingestion/extraction.js';
 import { httpDeepScrape, type DeepScrapeAdapter } from './ingestion/deepScrape.js';
 import { aiStrategicAnalysis, type StrategicAnalysisAdapter } from './ingestion/strategicAnalysis.js';
 import { dbCostGate, type CostGate } from './ingestion/costGate.js';
@@ -307,9 +307,15 @@ const processOpportunity = async (
     const { messageId, from, body, internalDate } = source;
     const canonicalUrl = `gmail://${messageId}#${index}`;
 
-    // Dedup: skip an opportunity already persisted in a prior run (unless forced).
+    // Dedup: skip an opportunity already persisted in a prior run (unless forced). A no-key
+    // heuristic placeholder (carrying NO_API_KEY_CONCERN) is the exception — it must be
+    // reprocessed so a later keyed run replaces it with the genuine AI extraction before the
+    // digest is finalized (#12, Codex P2); otherwise dedup would skip it, the marker would be
+    // written, and a single-opportunity digest would stay permanently heuristic once the key is
+    // restored. A still-no-key run just rewrites the same heuristic row (idempotent upsert).
     const existing = await deps.persist.findByCanonicalUrl(canonicalUrl);
-    if (existing && !force) {
+    const existingIsHeuristicFallback = existing?.concerns?.includes(NO_API_KEY_CONCERN) ?? false;
+    if (existing && !force && !existingIsHeuristicFallback) {
         console.log(`Opportunity ${canonicalUrl} already processed. Skipping.`);
         return;
     }
@@ -554,6 +560,10 @@ export const runIngestion = async (
             const analysisResults = await deps.extraction.extract(source);
             summary.extracted += analysisResults.length;
 
+            // #12: snapshot the error count before this digest's opportunities, so we can
+            // tell whether the whole digest persisted cleanly before marking it complete.
+            const errorsBeforeDigest = summary.errors.length;
+
             for (const [i, analysis] of analysisResults.entries()) {
                 if (analysis.type === 'NOISE') continue;
                 try {
@@ -565,6 +575,32 @@ export const runIngestion = async (
                         canonicalUrl: `gmail://${source.messageId}#${i}`,
                     }, error);
                 }
+            }
+
+            // COST GATE completion (#12): write the per-digest "fully extracted" marker only
+            // if Pass 1 (extraction + per-opportunity persistence) succeeded for every
+            // opportunity in this digest. A crash mid-digest never reaches this line, and a
+            // Pass-1 persist failure (stage 'opportunity') leaves the marker unwritten — so the
+            // next run re-extracts to recover the missing opportunities, instead of the old
+            // #0-proxy skipping a partially-written digest forever. A clean all-NOISE digest (no
+            // opportunities, no errors) is still marked, so newsletters aren't re-extracted.
+            //
+            // A Pass-2 deep failure (stage 'deepScrape') does NOT block the marker (#12, Codex
+            // P2): the Pass-1 row is already persisted (SHALLOW, retryable via a forced reprocess
+            // or the #6 deep gate), and a non-force re-extraction can't recover the deep data
+            // anyway — processOpportunity's dedup returns before Pass 2 — so blocking on it would
+            // just burn one more extraction call every run and then mark the digest regardless.
+            //
+            // The marker also means "a genuine AI extraction finished", so a degraded no-key
+            // heuristic run never sets it: that path returns at most one row regardless of how
+            // many opportunities the digest holds and skips the LLM entirely, so marking it would
+            // lose the rest of the digest and skip it forever once a key exists. Left unmarked it
+            // re-runs the (free) heuristic each time and lets a later AI run extract it properly.
+            const pass1Failed = summary.errors
+                .slice(errorsBeforeDigest)
+                .some((e) => e.stage !== 'deepScrape');
+            if (!pass1Failed && !isHeuristicFallback(analysisResults)) {
+                await deps.costGate.markDigestExtracted(source.messageId);
             }
         } catch (error) {
             recordError(summary, { stage: 'source', messageId: source.messageId }, error);
