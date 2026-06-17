@@ -27,6 +27,7 @@ import { httpDeepScrape, type DeepScrapeAdapter } from './ingestion/deepScrape.j
 import { aiStrategicAnalysis, type StrategicAnalysisAdapter } from './ingestion/strategicAnalysis.js';
 import { dbCostGate, type CostGate } from './ingestion/costGate.js';
 import { reconciledToSignals } from './ingestion/recommendedActionAdapter.js';
+import { parsePreferences } from './ingestion/preferences.js';
 import type {
     IngestionError,
     IngestionPreferences,
@@ -55,17 +56,17 @@ export interface IngestionDeps {
     loadGuardrails: () => Promise<GuardrailSettings>;
 }
 
-const DEFAULT_PREFERENCES: IngestionPreferences = {
-    keywords: ['Software Engineer', 'AI', 'Fullstack', 'TypeScript'],
-    locations: ['Remote', 'London'],
-};
-
-/** Production preferences loader: the `user_preferences` settings row, with a fallback. */
+/**
+ * Production preferences loader: read the `user_preferences` settings row and validate it
+ * through `parsePreferences` (zod) before it reaches the scoring engine. A missing or
+ * malformed row degrades to `DEFAULT_PREFERENCES` rather than the old unchecked `as` cast
+ * (issue #15).
+ */
 export const dbLoadPreferences = async (): Promise<IngestionPreferences> => {
     const prefsRecord = await db.query.settings.findFirst({
         where: eq(settings.key, 'user_preferences'),
     });
-    return (prefsRecord?.value as IngestionPreferences) || DEFAULT_PREFERENCES;
+    return parsePreferences(prefsRecord?.value);
 };
 
 /**

@@ -1,15 +1,24 @@
+/**
+ * User scoring preferences, as persisted under settings key `user_preferences`.
+ *
+ * Promoted (issue #15) from the inline `ScoringInput.preferences` shape into a named,
+ * exported type so the scoring engine, the ingestion pipeline, and the validated
+ * `loadPreferences` accessor all reference one contract instead of re-declaring it.
+ */
+export interface Preferences {
+    keywords: string[];
+    locations: string[]; // Generic keywords to search for in text
+    locationWeights?: Record<string, number>; // Precise location point maps
+    industryWeights?: Record<string, number>; // Precise industry point maps
+    minSalary?: number;
+}
+
 export interface ScoringInput {
     title: string;
     description: string;
     industry?: string;
     location?: string;
-    preferences: {
-        keywords: string[];
-        locations: string[]; // Generic keywords to search for in text
-        locationWeights?: Record<string, number>; // Precise location point maps
-        industryWeights?: Record<string, number>; // Precise industry point maps
-        minSalary?: number;
-    };
+    preferences: Preferences;
 }
 
 import { splitIndustries, normalizeIndustry } from './industryRefinement';
