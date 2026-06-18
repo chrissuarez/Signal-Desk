@@ -65,6 +65,23 @@ const tabFromSearch = (search: string): Tab => {
   return 'ALL';
 };
 
+// Coerce a stored settings value into the valid editable shape the form expects, so the
+// dashboard can always *repair* a corrupt `user_preferences` row rather than re-posting it.
+// The backend GET returns the raw jsonb (unvalidated), and the write path now rejects a bad
+// shape with a 400 (#16) — so without this, a row malformed only in the weight maps would
+// load verbatim and make Save fail, trapping even good keyword/location edits. Keywords and
+// locations are rebuilt from the text inputs on Save; the weight maps are not, so they must
+// be sanitised on load.
+const stringArray = (raw: unknown): string[] =>
+  Array.isArray(raw) ? raw.filter((s): s is string => typeof s === 'string') : [];
+const numericWeights = (raw: unknown): Record<string, number> =>
+  raw && typeof raw === 'object'
+    ? Object.fromEntries(
+        Object.entries(raw as Record<string, unknown>)
+          .filter(([, v]) => typeof v === 'number' && Number.isFinite(v)) as [string, number][],
+      )
+    : {};
+
 export default function Dashboard() {
   const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
   const [loading, setLoading] = useState(true);
@@ -114,14 +131,16 @@ export default function Dashboard() {
         fetchSettings('user_preferences'),
         fetchSettings('gmail_tokens'),
       ]);
+      const keywords = stringArray(prefsData.keywords);
+      const locations = stringArray(prefsData.locations);
       setPrefs({
-        keywords: prefsData.keywords || [],
-        locations: prefsData.locations || [],
-        industryWeights: prefsData.industryWeights || {},
-        locationWeights: prefsData.locationWeights || {},
+        keywords,
+        locations,
+        industryWeights: numericWeights(prefsData.industryWeights),
+        locationWeights: numericWeights(prefsData.locationWeights),
       });
-      setKeywordInput((prefsData.keywords || []).join(', '));
-      setLocationInput((prefsData.locations || []).join(', '));
+      setKeywordInput(keywords.join(', '));
+      setLocationInput(locations.join(', '));
       setGmailStatus({
         connected: !!gmailData.access_token && !gmailData.authError,
         error: gmailData.authError,
