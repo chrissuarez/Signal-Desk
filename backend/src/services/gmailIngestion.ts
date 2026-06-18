@@ -20,9 +20,13 @@ export const getGmailService = async () => {
 
     const auth = getOAuthClient(tokens);
 
-    // Patch the auth client to handle potential refresh errors that happen during requests
-    const originalGetAccessToken = auth.getAccessToken.bind(auth);
-    auth.getAccessToken = async (...args: any[]) => {
+    // Patch the auth client to handle potential refresh errors that happen during requests.
+    // `getAccessToken` is an overloaded library signature (promise form + callback form), which
+    // TS can't reconcile with a single forwarding wrapper — so we forward all args through an
+    // `any` call and cast the replacement back to the original type. Runtime behaviour is
+    // identical; the casts only bridge the un-typeable overload.
+    const originalGetAccessToken = auth.getAccessToken.bind(auth) as (...args: any[]) => Promise<any>;
+    auth.getAccessToken = (async (...args: any[]) => {
         try {
             return await originalGetAccessToken(...args);
         } catch (error: any) {
@@ -37,7 +41,7 @@ export const getGmailService = async () => {
             }
             throw error;
         }
-    };
+    }) as typeof auth.getAccessToken;
 
     return google.gmail({ version: 'v1', auth });
 };
