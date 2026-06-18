@@ -10,7 +10,6 @@ export interface Preferences {
     locations: string[]; // Generic keywords to search for in text
     locationWeights?: Record<string, number>; // Precise location point maps
     industryWeights?: Record<string, number>; // Precise industry point maps
-    minSalary?: number;
 }
 
 export interface ScoringInput {

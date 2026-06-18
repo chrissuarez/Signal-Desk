@@ -39,15 +39,14 @@ export const DEFAULT_PREFERENCES: Preferences = {
 /**
  * Mirrors the `Preferences` type. `keywords`/`locations` are the core contract
  * `calculateFitScore` always iterates, so they are required string arrays; the weight maps
- * and `minSalary` are optional tuning. Unknown keys are stripped (zod default), so an extra
- * field written by the frontend's separate write path never fails validation here.
+ * are optional tuning. Unknown keys are stripped (zod default), so a field the contract no
+ * longer carries (e.g. a legacy stored `minSalary`) is dropped rather than failing here.
  */
 const preferencesSchema = z.object({
     keywords: z.array(z.string()),
     locations: z.array(z.string()),
     locationWeights: z.record(z.string(), z.number()).optional(),
     industryWeights: z.record(z.string(), z.number()).optional(),
-    minSalary: z.number().optional(),
 });
 
 /**
@@ -99,12 +98,11 @@ export const validatePreferences = (value: unknown): PreferencesValidation => {
  * `exactOptionalPropertyTypes` requires for assignment to `Preferences`.
  */
 const normalize = (data: z.infer<typeof preferencesSchema>): Preferences => {
-    const { keywords, locations, locationWeights, industryWeights, minSalary } = data;
+    const { keywords, locations, locationWeights, industryWeights } = data;
     return {
         keywords,
         locations,
         ...(locationWeights !== undefined && { locationWeights }),
         ...(industryWeights !== undefined && { industryWeights }),
-        ...(minSalary !== undefined && { minSalary }),
     };
 };

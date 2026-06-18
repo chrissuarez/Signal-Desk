@@ -20,3 +20,10 @@ The frontend keeps a lightweight local TypeScript type for build-time safety (dr
 guarantee that any skew fails loud rather than corrupting stored config. We deliberately do
 **not** stand up shared-types infrastructure for a single-user app; revisit only if a
 genuine third consumer of the shape appears.
+
+We also **dropped `minSalary`** from the `Preferences` contract here. It was a phantom field
+— present in the type and zod schema but read by no scoring path and set by no form. An
+honest contract carries only what is real, so making this the validated source of truth was
+the moment to remove it. The schema strips unknown keys, so any legacy stored `minSalary` is
+silently dropped on the next read with no migration. Salary filtering, if ever wanted, is a
+separate feature that would add the field back alongside the logic that reads it.

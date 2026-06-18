@@ -17,12 +17,11 @@ describe('parsePreferences', () => {
             locations: ['Remote'],
             industryWeights: { agency: 20, gambling: -100 },
             locationWeights: { mars: -30 },
-            minSalary: 90000,
         };
         expect(parsePreferences(stored)).toEqual(stored);
     });
 
-    it('keeps a valid row that omits the optional weight maps and minSalary', () => {
+    it('keeps a valid row that omits the optional weight maps', () => {
         const stored = { keywords: ['engineer'], locations: ['London'] };
         expect(parsePreferences(stored)).toEqual(stored);
     });
@@ -62,22 +61,22 @@ describe('validatePreferences', () => {
             locations: ['Remote'],
             industryWeights: { agency: 20 },
             locationWeights: { mars: -30 },
-            minSalary: 90000,
         };
         const result = validatePreferences(payload);
         expect(result).toEqual({ ok: true, value: payload });
     });
 
-    it('accepts a minimal payload that omits the optional weight maps and minSalary', () => {
+    it('accepts a minimal payload that omits the optional weight maps', () => {
         const payload = { keywords: ['engineer'], locations: ['London'] };
         const result = validatePreferences(payload);
         expect(result).toEqual({ ok: true, value: payload });
     });
 
-    it('strips unknown keys so only the contracted shape is persisted', () => {
+    it('strips unknown keys — incl. the dropped minSalary — so only the contracted shape persists', () => {
         const result = validatePreferences({
             keywords: ['engineer'],
             locations: ['London'],
+            minSalary: 90000, // phantom field: in no scoring path, dropped from the contract (#16)
             rogueField: 'ignored',
         });
         expect(result).toEqual({ ok: true, value: { keywords: ['engineer'], locations: ['London'] } });

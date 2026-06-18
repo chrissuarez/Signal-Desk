@@ -40,7 +40,6 @@ export type Preferences = {
     locations: string[];
     industryWeights: Record<string, number>;
     locationWeights: Record<string, number>;
-    minSalary?: number;
 };
 
 // Typed write path for `user_preferences`. The backend revalidates and returns 400 on a
