@@ -56,6 +56,10 @@ _Avoid_: scorecard, classification (those are parts of it).
 A deterministic, non-negotiable rule that can override the LLM's Strategic Analysis — e.g. an excluded industry, or an unambiguous resource-admin signal — by capping the Strategic Score or forcing a Strategic Category. Guardrails veto; they do not score. Guardrail *inputs* (excluded industries, penalty keywords, Tier-1 boost keywords) live in the configurable `settings`/`preferences`; the LLM prompt and category definitions are hardcoded in the codebase.
 _Avoid_: fallback (the fallback is the separate failure-path behaviour), filter.
 
+**Preferences**:
+The user's tunable scoring configuration — search keywords, target locations, and the industry/location weight maps that feed the Fit Score. A single typed contract that the dashboard writes and ingestion reads; every write is validated against it so the two sides cannot drift. Distinct from Guardrail inputs, which veto rather than weight.
+_Avoid_: settings (the generic key→value store that holds Preferences among other keys, e.g. Guardrail inputs and Gmail tokens), scopes (the dashboard's word for the keyword/location lists), config.
+
 **Strategic Category**:
 The single enum label classifying *what kind* of role an Opportunity is (STRATEGIC_FIT, USEFUL_BRIDGE, SEO_COMFORT_ZONE, RESOURCE_ADMIN_TRAP, GENERIC_OPS_UNCLEAR, REJECT). The LLM proposes it, then deterministic reconciliation enforces coherence with the Strategic Score by fixed precedence: (1) `resourceAdminTrapRisk = HIGH` forces RESOURCE_ADMIN_TRAP; (2) `seoComfortZoneRisk = HIGH` without strong ops signals forces SEO_COMFORT_ZONE; (3) otherwise the LLM's category stands but is clamped to the score — STRATEGIC_FIT requires score ≥ 70, else it is demoted. Category encodes the *kind*; Strategic Score encodes *how good*.
 _Avoid_: type, classification, role family ("role family" is the brief's grouping of target titles, a different concept).

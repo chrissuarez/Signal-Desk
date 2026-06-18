@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { parsePreferences, DEFAULT_PREFERENCES } from './preferences.js';
+import { parsePreferences, validatePreferences, DEFAULT_PREFERENCES } from './preferences.js';
 
 /**
  * `parsePreferences` is the testable core of the validated `user_preferences` read path
@@ -17,12 +17,11 @@ describe('parsePreferences', () => {
             locations: ['Remote'],
             industryWeights: { agency: 20, gambling: -100 },
             locationWeights: { mars: -30 },
-            minSalary: 90000,
         };
         expect(parsePreferences(stored)).toEqual(stored);
     });
 
-    it('keeps a valid row that omits the optional weight maps and minSalary', () => {
+    it('keeps a valid row that omits the optional weight maps', () => {
         const stored = { keywords: ['engineer'], locations: ['London'] };
         expect(parsePreferences(stored)).toEqual(stored);
     });
@@ -45,5 +44,58 @@ describe('parsePreferences', () => {
     it('DEFAULT_PREFERENCES has present-but-empty weight maps (intentional no-op)', () => {
         expect(DEFAULT_PREFERENCES.industryWeights).toEqual({});
         expect(DEFAULT_PREFERENCES.locationWeights).toEqual({});
+    });
+});
+
+/**
+ * `validatePreferences` is the testable core of the validated `user_preferences` *write*
+ * path (issue #16). It shares the read path's schema but inverts the failure contract:
+ * a valid payload is accepted and normalized; an invalid one is **rejected** (so the route
+ * returns a 4xx) rather than falling back to defaults. The cases mirror that contract —
+ * accept-and-normalize vs reject-with-reason.
+ */
+describe('validatePreferences', () => {
+    it('accepts a valid payload and returns it normalized', () => {
+        const payload = {
+            keywords: ['delivery lead'],
+            locations: ['Remote'],
+            industryWeights: { agency: 20 },
+            locationWeights: { mars: -30 },
+        };
+        const result = validatePreferences(payload);
+        expect(result).toEqual({ ok: true, value: payload });
+    });
+
+    it('accepts a minimal payload that omits the optional weight maps', () => {
+        const payload = { keywords: ['engineer'], locations: ['London'] };
+        const result = validatePreferences(payload);
+        expect(result).toEqual({ ok: true, value: payload });
+    });
+
+    it('strips unknown keys — incl. the dropped minSalary — so only the contracted shape persists', () => {
+        const result = validatePreferences({
+            keywords: ['engineer'],
+            locations: ['London'],
+            minSalary: 90000, // phantom field: in no scoring path, dropped from the contract (#16)
+            rogueField: 'ignored',
+        });
+        expect(result).toEqual({ ok: true, value: { keywords: ['engineer'], locations: ['London'] } });
+    });
+
+    it('rejects a malformed payload instead of defaulting', () => {
+        // keywords as a string, weights with a non-numeric value — the read path would
+        // degrade these to defaults; the write path must refuse them.
+        const result = validatePreferences({
+            keywords: 'engineer',
+            locations: ['Remote'],
+            industryWeights: { agency: 'high' },
+        });
+        expect(result.ok).toBe(false);
+        if (!result.ok) expect(result.error).toBeTruthy();
+    });
+
+    it('rejects a missing payload (null / undefined)', () => {
+        expect(validatePreferences(undefined).ok).toBe(false);
+        expect(validatePreferences(null).ok).toBe(false);
     });
 });
