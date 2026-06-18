@@ -20,7 +20,7 @@ export interface ScoringInput {
     preferences: Preferences;
 }
 
-import { splitIndustries, normalizeIndustry } from './industryRefinement';
+import { splitIndustries, normalizeIndustry } from './industryRefinement.js';
 
 export const calculateFitScore = (input: ScoringInput): { score: number; reasons: string[]; concerns: string[] } => {
     let score = 50; // Starting midpoint
