@@ -12,6 +12,11 @@
  * config has a safe default, an extraction failure does not — so `parsePreferences` always
  * returns usable `Preferences`: a missing/invalid row degrades to `DEFAULT_PREFERENCES`
  * (logging the invalid case), never throws, never returns undefined.
+ *
+ * The same schema is also the source of truth at the **write** boundary (issue #16):
+ * `validatePreferences` rejects an invalid payload instead of falling back, so the dashboard
+ * can never store a shape that would later degrade silently to defaults on read. Read
+ * tolerates (a stale row still scores); write refuses (fail loud, never persist junk).
  */
 
 import { z } from 'zod';
@@ -62,9 +67,39 @@ export const parsePreferences = (value: unknown): Preferences => {
         }
         return DEFAULT_PREFERENCES;
     }
-    // Conditional spreads keep optional keys absent rather than present-as-undefined, which
-    // `exactOptionalPropertyTypes` requires for assignment to `Preferences`.
-    const { keywords, locations, locationWeights, industryWeights, minSalary } = result.data;
+    return normalize(result.data);
+};
+
+/**
+ * The result of validating a candidate `user_preferences` write. Either a normalized
+ * `Preferences` ready to persist, or the human-readable zod reason it was rejected. Keeps
+ * zod out of the route: callers branch on `ok` alone.
+ */
+export type PreferencesValidation =
+    | { ok: true; value: Preferences }
+    | { ok: false; error: string };
+
+/**
+ * Validate a candidate `user_preferences` payload at the write boundary (issue #16). Unlike
+ * the read path, an invalid payload is **rejected**, not defaulted — the API turns this into
+ * a 4xx so a malformed dashboard write fails loud rather than corrupting stored config. On
+ * success the payload is normalized (unknown keys stripped) so only the contracted shape is
+ * persisted, keeping the write and read sides on one schema.
+ */
+export const validatePreferences = (value: unknown): PreferencesValidation => {
+    const result = preferencesSchema.safeParse(value);
+    if (!result.success) {
+        return { ok: false, error: result.error.message };
+    }
+    return { ok: true, value: normalize(result.data) };
+};
+
+/**
+ * Conditional spreads keep optional keys absent rather than present-as-undefined, which
+ * `exactOptionalPropertyTypes` requires for assignment to `Preferences`.
+ */
+const normalize = (data: z.infer<typeof preferencesSchema>): Preferences => {
+    const { keywords, locations, locationWeights, industryWeights, minSalary } = data;
     return {
         keywords,
         locations,

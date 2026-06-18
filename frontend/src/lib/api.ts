@@ -30,14 +30,30 @@ export async function fetchSettings(key: string) {
     return response.json();
 }
 
-export async function updateSettings(key: string, value: any) {
-    const response = await fetch(`${API_BASE_URL}/settings/${key}`, {
+// The dashboard's local mirror of the backend `Preferences` contract (engine/scoring.ts).
+// Build-time type only — the runtime guarantee is the backend's zod validation at the
+// write boundary (#16), which rejects any divergent shape with a 4xx. We deliberately keep
+// no second runtime validator here: a single source of truth that fails loud beats two that
+// can skew.
+export type Preferences = {
+    keywords: string[];
+    locations: string[];
+    industryWeights: Record<string, number>;
+    locationWeights: Record<string, number>;
+    minSalary?: number;
+};
+
+// Typed write path for `user_preferences`. The backend revalidates and returns 400 on a
+// shape mismatch, so a frontend/backend drift surfaces as a thrown error, never a silently
+// corrupt stored row.
+export async function updatePreferences(prefs: Preferences) {
+    const response = await fetch(`${API_BASE_URL}/settings/user_preferences`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(value),
+        body: JSON.stringify(prefs),
         credentials: 'include',
     });
-    if (!response.ok) throw new Error(`Failed to update settings for ${key}`);
+    if (!response.ok) throw new Error('Failed to update preferences');
     return response.json();
 }
 
